@@ -140,10 +140,19 @@ p {
   color: #c1394d;
 }
 .button.icon-button {
-  color: #6c7893;
-  font-size: 11px;
-  min-height: 30px;
-  padding: 4px;
+  color: var(--muted);
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+}
+.button.icon-button:hover:not(:disabled):not([aria-disabled="true"]) {
+  color: var(--blue);
+  background: var(--tint, #edf4ff);
+}
+.note-footer .vote-score {
+  margin-left: auto;
 }
 .button .ph {
   font-size: 17px;
@@ -1758,8 +1767,11 @@ a:focus-visible {
     padding-top: 8px;
   }
   .button.icon-button {
-    font-size: 12px;
-    padding: 8px;
+    flex-basis: 44px;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
   }
   .note-editor {
     padding: 0 14px 14px;
@@ -3391,14 +3403,14 @@ a:focus-visible {
   flex-wrap: wrap;
   gap: 8px;
 }
-.card-action {
-  flex-wrap: wrap;
-}
 .card-action > div:first-child {
-  flex: 1 1 160px;
+  flex: 1;
+  min-width: 0;
 }
 .action-controls {
-  flex-basis: 100%;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 0;
 }
 @media (max-width: 900px) {
   .app-shell:not(.writing-screen) .board-header {

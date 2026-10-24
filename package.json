@@ -13,7 +13,8 @@
     "deploy": "alchemy deploy",
     "smoke": "bun scripts/smoke.ts",
     "lint": "oxlint .",
-    "test:integration": "bun scripts/smoke.ts && bun scripts/facilitation-smoke.ts && bun scripts/cleanup-smoke.ts && bun scripts/admin-smoke.ts && bun scripts/websocket-smoke.ts"
+    "test:integration": "bun scripts/smoke.ts && bun scripts/facilitation-smoke.ts && bun scripts/cleanup-smoke.ts && bun scripts/admin-smoke.ts && bun scripts/websocket-smoke.ts",
+    "screenshots": "bun scripts/screenshots/capture.ts"
   },
   "dependencies": {
     "@alchemy.run/cloudflare": "https://pkg.alchemy.run/@alchemy.run/cloudflare/72f84cc",
@@ -44,6 +45,7 @@
     "@types/bun": "1.4.4",
     "@types/ws": "8.18.2",
     "oxlint": "1.89.0",
+    "playwright": "1.64.1",
     "typescript": "7.0.2",
     "vitest": "5.0.5",
     "ws": "8.22.0"

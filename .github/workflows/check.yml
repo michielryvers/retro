@@ -54,3 +54,45 @@ jobs:
         env:
           RETRO_DOMAIN: ${{ vars.RETRO_DOMAIN }}
         run: curl --fail --silent --show-error --retry 5 --retry-delay 5 --output /dev/null "https://$RETRO_DOMAIN/"
+
+  screenshots:
+    needs: deploy
+    if: github.repository == 'michielryvers/retro' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: retro-readme-screenshots
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.3"
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run screenshots
+      - name: Update README images when changed
+        run: |
+          git fetch origin main
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "A newer commit is on main; its run will update the screenshots."
+            exit 0
+          fi
+          git add .github/images/board.png .github/images/mobile.png
+          if git diff --cached --quiet; then
+            echo "Screenshots are unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update README screenshots"
+          if ! git push origin HEAD:main; then
+            git fetch origin main
+            if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+              echo "Main advanced during capture; leaving screenshots to its run."
+              exit 0
+            fi
+            exit 1
+          fi

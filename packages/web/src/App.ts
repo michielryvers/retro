@@ -1745,8 +1745,12 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
         isDisabled: disabled || (m.busy && !m.pendingVote),
         toView: (a) =>
           h.button(
-            [...a.button, h.Class(`button ${style}`)],
-            [...(ic ? [icon(ic)] : []), text],
+            [
+              ...a.button,
+              h.Class(`button ${style}`),
+              ...(style === "icon-button" ? [h.AriaLabel(text), h.Title(text)] : []),
+            ],
+            [...(ic ? [icon(ic)] : []), ...(style === "icon-button" ? [] : [text])],
           ),
       },
       h,
@@ -3355,13 +3359,24 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                                         ],
                                       )
                                     : null,
+                                  admin &&
+                                  b.phase === "actions" &&
+                                  m.selected !== n.id
+                                    ? button(
+                                        "Add action",
+                                        Message.Select({ id: n.id }),
+                                        "icon-button",
+                                        false,
+                                        "list-plus",
+                                      )
+                                    : null,
                                 ],
                               ),
                               canCombine && n.parts
                                 ? button(
-                                    "Split",
+                                    "Split notes",
                                     Message.Split({ id: n.id }),
-                                    "quiet",
+                                    "icon-button",
                                     m.busy,
                                     "arrows-out",
                                   )
@@ -3400,14 +3415,14 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                                                     Message.EditAction({
                                                       id: a.id,
                                                     }),
-                                                    "quiet",
+                                                    "icon-button",
                                                     m.busy,
                                                     "pencil-simple",
                                                   ),
                                                   button(
                                                     "Delete action",
                                                     run("deleteAction", a.id),
-                                                    "quiet",
+                                                    "icon-button",
                                                     m.busy,
                                                     "trash",
                                                   ),
@@ -3417,17 +3432,6 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                                         ],
                                       ),
                                 ),
-                              admin &&
-                              b.phase === "actions" &&
-                              m.selected !== n.id
-                                ? button(
-                                    "Add action",
-                                    Message.Select({ id: n.id }),
-                                    "quiet",
-                                    false,
-                                    "plus",
-                                  )
-                                : null,
                               m.selected === n.id && !m.actionId
                                 ? actionForm
                                 : null,

@@ -49,6 +49,8 @@ bun run typecheck
 bun run test
 bun run build
 bun run test:integration # with the dev server running
+bunx playwright install chromium
+bun run screenshots
 ```
 
 ### Deploy on Cloudflare
@@ -73,6 +75,8 @@ bun run deploy --stage prod --no-input --yes
 The token needs Workers Scripts Write, Account Settings Read, Secrets Store Write, and Access: Apps and Policies Write on the account, plus Zone Read, DNS Write, and Workers Routes Write on the site’s zone. See [Alchemy’s CI guide](https://alchemy.run/environments/ci/) for credentials and state setup.
 
 Pushes to `main` run checks and then deploy. Pull requests run checks without deployment credentials. Production deployments run one at a time. For a fork, update the repository guard in the workflow and allow `main` in your `production` environment.
+
+After a successful deployment, a separate job renders the actual app view with fixed fictional data and captures desktop/mobile screenshots. It commits changed images back to `main` using GitHub’s built-in token, without starting another workflow run. No live rooms or Cloudflare credentials are used for screenshots. The fixture and capture script live in `scripts/screenshots/`.
 
 The `CommonGround` infrastructure identifiers preserve the original deployment. Keep them stable when updating an existing installation. Infrastructure state and `.env` files must stay out of Git.
 
