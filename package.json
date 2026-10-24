@@ -1,0 +1,64 @@
+{
+  "name": "common-ground",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "alchemy dev",
+    "build": "vite build --config packages/web/vite.config.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "deploy": "alchemy deploy",
+    "smoke": "bun scripts/smoke.ts",
+    "lint": "oxlint .",
+    "test:integration": "bun scripts/smoke.ts && bun scripts/facilitation-smoke.ts && bun scripts/cleanup-smoke.ts && bun scripts/admin-smoke.ts && bun scripts/websocket-smoke.ts"
+  },
+  "dependencies": {
+    "@alchemy.run/cloudflare": "https://pkg.alchemy.run/@alchemy.run/cloudflare/72f84cc",
+    "@alchemy.run/domain": "https://pkg.alchemy.run/@alchemy.run/domain/72f84cc",
+    "@alchemy.run/frontend-frameworks": "https://pkg.alchemy.run/@alchemy.run/frontend-frameworks/72f84cc",
+    "@effect/platform-browser": "4.0.6",
+    "@effect/platform-bun": "4.0.6",
+    "@effect/platform-node": "4.0.6",
+    "@effect/platform-node-shared": "4.0.6",
+    "@foldkit/ui": "0.169.0",
+    "@foldkit/vite-plugin": "0.28.0",
+    "@fontsource-variable/inter": "5.3.0",
+    "@noble/hashes": "^2.4.0",
+    "@phosphor-icons/web": "2.1.2",
+    "@retro/domain": "workspace:*",
+    "@retro/server": "workspace:*",
+    "@retro/web": "workspace:*",
+    "alchemy": "https://pkg.alchemy.run/alchemy/72f84cc",
+    "effect": "4.0.6",
+    "foldkit": "0.169.0",
+    "jose": "^6.2.13",
+    "vite": "8.3.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261024.1",
+    "@effect/vitest": "4.0.6",
+    "@oxlint/plugins": "1.89.0",
+    "@types/bun": "1.4.4",
+    "@types/ws": "8.18.2",
+    "oxlint": "1.89.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5",
+    "ws": "8.22.0"
+  },
+  "trustedDependencies": [
+    "workerd",
+    "esbuild"
+  ],
+  "overrides": {
+    "effect": "4.0.6",
+    "@effect/platform-node-shared": "4.0.6"
+  },
+  "patchedDependencies": {
+    "@alchemy.run/domain@https://pkg.alchemy.run/@alchemy.run/domain/72f84cc": "patches/domain-internal-export.patch",
+    "@alchemy.run/cloudflare@https://pkg.alchemy.run/@alchemy.run/cloudflare/72f84cc": "patches/cloudflare-runtime.patch",
+    "alchemy@https://pkg.alchemy.run/alchemy/72f84cc": "patches/alchemy-bun-node-loader.patch"
+  }
+}

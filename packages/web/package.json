@@ -1,0 +1,8 @@
+{
+  "name": "@retro/web",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  }
+}

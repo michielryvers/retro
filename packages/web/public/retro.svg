@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>Retro — three notes</title>
+  <rect x="7" y="21" width="25" height="34" rx="5" transform="rotate(-12 19.5 38)" fill="#FBE7ED" stroke="#B42A50" stroke-width="2"/>
+  <rect x="32" y="20" width="25" height="34" rx="5" transform="rotate(12 44.5 37)" fill="#E6F3E8" stroke="#28734D" stroke-width="2"/>
+  <rect x="20" y="9" width="26" height="36" rx="5" fill="#E8EEFC" stroke="#245BD6" stroke-width="2"/>
+  <path d="M27 21h12M27 27h12M27 33h7" stroke="#245BD6" stroke-width="2" stroke-linecap="round"/>
+</svg>

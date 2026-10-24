@@ -1,0 +1,406 @@
+diff --git a/lib/Domain/index.d.ts b/lib/Domain/index.d.ts
+--- a/lib/Domain/index.d.ts
++++ b/lib/Domain/index.d.ts
+@@ -45,4 +45,11 @@
+  * @provides WorkflowEngine
+  */
+ export declare const DurableObjects: Layer.Layer<Platform | WorkflowEngine.WorkflowEngine, never, Worker>;
+-//# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=index.d.ts.map
++import type * as Effect from "effect/Effect";
++import type { DurableObjectState } from "../Workers/DurableObjectState.ts";
++export type AggregateExtension = (name: string, state: Effect.Success<typeof DurableObjectState>, storage: {
++  purge: (manifest?: unknown) => Effect.Effect<unknown, never, any>;
++  finishPurge: () => Effect.Effect<void, never, any>;
++}) => Effect.Effect<{ methods?: Record<string, unknown>; afterCommit?: (id: string) => Effect.Effect<void, never, any> }>;
++export declare const durableObjectsWith: (extend: AggregateExtension) => Layer.Layer<Platform | WorkflowEngine.WorkflowEngine, never, Worker>;
+\ No newline at end of file
+diff --git a/src/Domain/Retry.ts b/src/Domain/Retry.ts
+new file mode 100644
+--- /dev/null
++++ b/src/Domain/Retry.ts
+@@ -0,0 +1,28 @@
++import * as Effect from "effect/Effect";
++import * as Schedule from "effect/Schedule";
++
++/** Cloudflare flags can be wrapped by Alchemy's RpcCallError. */
++export const retryableTransit = (error: unknown): boolean => {
++  let current = error;
++  let retryable = false;
++  const seen = new Set<unknown>();
++  while (current !== null && typeof current === "object" && !seen.has(current)) {
++    seen.add(current);
++    const failure = current as { overloaded?: boolean; retryable?: boolean; cause?: unknown };
++    if (failure.overloaded === true) return false;
++    if (failure.retryable === true) retryable = true;
++    current = failure.cause;
++  }
++  return retryable;
++};
++
++/** Reacquire a stub inside call on every retry; failed stubs may be poisoned. */
++export const transit = <A>(call: () => Effect.Effect<A, unknown>) =>
++  Effect.suspend(call).pipe(
++    Effect.catchDefect((error) => Effect.fail(error)),
++    Effect.retry({
++      while: retryableTransit,
++      schedule: Schedule.min([Schedule.exponential("100 millis"), Schedule.spaced("2 seconds")]),
++      times: 35,
++    }),
++  );
+diff --git a/src/Domain/index.ts b/src/Domain/index.ts
+--- a/src/Domain/index.ts
++++ b/src/Domain/index.ts
+@@ -42,6 +42,40 @@
+ import type { Worker } from "../Workers/Worker.ts";
+ import { DurableObjectEngine } from "../Workflows/DurableObjectEngine.ts";
+ 
++import { transit } from "./Retry.ts";
++
++// Physical storage cleanup. Business authorization belongs to the application extension.
++const maintenance = (state: DurableObjectState) => ({
++  purge: (manifest: unknown = true) => exclusively(Effect.gen(function* () {
++    yield* Effect.promise(async () => {
++      for (const socket of state.raw.getWebSockets()) socket.close(1008, "This resource was permanently deleted.");
++      await state.raw.storage.deleteAlarm();
++      await state.raw.storage.transaction(async tx => {
++        for (const table of ["alchemy_scheduled_events", "alchemy_alarm_callbacks"]) {
++          if ([...state.raw.storage.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", table)].length) {
++            state.raw.storage.sql.exec(`DELETE FROM ${table}`);
++          }
++        }
++        // Bound memory even when event history contains large snapshots.
++        let startAfter: string | undefined;
++        while (true) {
++          const batch = await tx.list({ limit: 32, ...(startAfter ? { startAfter } : {}) });
++          const keys = [...batch.keys()];
++          if (keys.length === 0) break;
++          await tx.delete(keys);
++          startAfter = keys[keys.length - 1];
++        }
++        await tx.put("deleted", manifest);
++      });
++    });
++    return manifest;
++  })),
++  finishPurge: () => state.storage.put("deleted", true),
++});
++const ensurePresent = (state: DurableObjectState) => Effect.gen(function* () {
++  if (yield* state.storage.get("deleted")) return yield* Effect.die(new Error("This resource was permanently deleted."));
++});
++
+ const pad = (n: number) => n.toString().padStart(12, "0");
+ 
+ const DefectTag = "alchemy/Domain/Defect";
+@@ -58,28 +92,13 @@
+   );
+ 
+ /**
+- * How long to keep retrying a Durable Object call that failed in transit:
+- * an instance being reset reports an opaque "internal error", and for a while
+- * after a deploy some instances still run the previous script (whose classes
+- * "do not implement" our methods). Backs off from 100ms to 2s, about a minute
+- * in total, so a call survives a deploy's rollout.
+- */
+-const TRANSIT_RETRY = {
+-  // Whichever delay is shorter: exponential at first, then every 2 seconds.
+-  schedule: Schedule.min([Schedule.exponential("100 millis"), Schedule.spaced("2 seconds")]),
+-  times: 35,
+-} as const;
+-
+-/**
+  * Call a Durable Object. A call that fails in transit is retried: every Domain
+  * object method is idempotent (sends dedupe by command id, deliveries by
+  * checkpoint, schedules replace, reads are reads). A defect the object
+  * reported, or a call that keeps failing, is a defect for the caller.
+  */
+-const unwrapDefects = <A>(call: Effect.Effect<unknown, unknown>): Effect.Effect<A> =>
+-  call.pipe(
+-    Effect.catchDefect((defect) => Effect.fail(defect)),
+-    Effect.retry(TRANSIT_RETRY),
++const unwrapDefects = <A>(call: () => Effect.Effect<unknown, unknown>): Effect.Effect<A> =>
++  transit(call).pipe(
+     Effect.catch((error) => Effect.die(error)),
+     Effect.flatMap((value) =>
+       value !== null && typeof value === "object" && DefectTag in value
+@@ -135,7 +154,7 @@
+   });
+ 
+ /** How long a queue drain may hold its lease before another drain may take over. */
+-const LEASE_MS = 60_000;
++const LEASE_MS = 120_000;
+ 
+ /**
+  * A durable, ordered work queue in the instance's storage. Rows are written
+@@ -158,10 +177,13 @@
+       }),
+     );
+     const drain: Effect.Effect<void> = Effect.gen(function* () {
+-      if (!(yield* acquire)) return;
++      // A busy lease must not acknowledge the durable alarm: after a crash
++        // the lease can outlive the worker. Let the alarm dispatcher retry it.
++        if (!(yield* acquire)) return yield* Effect.die(new Error("Domain drain lease is still held"));
+       yield* Effect.gen(function* () {
+-        const rows = yield* state.storage.list<Row>({ prefix });
++        const rows = yield* state.storage.list<Row>({ prefix, limit: 32 });
+         for (const [key, row] of rows) {
++          yield* state.storage.put(lease, Date.now() + LEASE_MS);
+           yield* process(row);
+           yield* state.storage.delete(key);
+         }
+@@ -298,17 +320,13 @@
+     });
+     // Like every other call, ride out a deploy's rollout: an instance still
+     // running the previous script cannot upgrade, so retry until one does.
+-    const response = yield* namespace
+-      .getByName(key)
+-      .fetch(forwarded)
++    const response = yield* transit(() => namespace.getByName(key).fetch(forwarded)
+       .pipe(
+         Effect.filterOrFail(
+           (response) => response.status === 101,
+-          (response) => new Error(`Live read upgrade answered ${response.status}`),
++          (response) => Object.assign(new Error(`Live read upgrade answered ${response.status}`), { retryable: response.status === 503 }),
+         ),
+-        Effect.retry(TRANSIT_RETRY),
+-        Effect.orDie,
+-      );
++      )).pipe(Effect.orDie);
+     // A fetched Response's headers are immutable; re-wrap the socket so
+     // middleware (CORS, cookies) can still add headers to the upgrade.
+     const body = response.body;
+@@ -324,9 +342,10 @@
+     return response;
+   });
+ 
+-const aggregateObject = (kit: AggregateKit) =>
++const aggregateObject = (kit: AggregateKit, extend: AggregateExtension) =>
+   Effect.gen(function* () {
+     const state = yield* DurableObjectState;
++    const extension = yield* extend(kit.name, state, maintenance(state));
+     return Effect.gen(function* () {
+       const outbox = yield* queue<Delivery>("outbox", kit.deliver);
+       const currentMeta = state.storage
+@@ -340,6 +359,7 @@
+         Effect.gen(function* () {
+           const { sent, kick } = yield* exclusively(
+             Effect.gen(function* () {
++              yield* ensurePresent(state);
+               const duplicate = yield* state.storage.get<SendResult>(`receipt:${meta.commandId}`);
+               if (duplicate) return { sent: duplicate, kick: false };
+               const current = (yield* state.storage.get<{
+@@ -401,25 +421,34 @@
+             }),
+           );
+           if (kick) yield* outbox.kick;
++          if (sent._tag === "Accepted" && extension.afterCommit) yield* extension.afterCommit(id);
+           return sent;
+         });
+       // Scheduled commands: one durable callback job per command id, run here when due.
+       const timers = yield* makeCallback(
+         "domain:schedule",
+         (job: { readonly id: string; readonly command: Json; readonly meta: Aggregate.SendMeta }) =>
+-          send(job.id, job.command, job.meta),
++          Effect.gen(function* () {
++            if (yield* state.storage.get("deleted")) return;
++            return yield* send(job.id, job.command, job.meta);
++          }),
+       );
+       return {
++        ...maintenance(state),
++        ...extension.methods,
+         send: (id: string, command: Json, meta: Aggregate.SendMeta) =>
+           reportDefects(send(id, command, meta)),
+         schedule: (id: string, command: Json, meta: Aggregate.SendMeta, due: Aggregate.Due) =>
+           reportDefects(
+-            timers.schedule(
+-              meta.commandId,
+-              "at" in due
+-                ? { at: due.at, payload: { id, command, meta } }
+-                : { after: due.afterMillis, payload: { id, command, meta } },
+-            ),
++            exclusively(Effect.gen(function* () {
++              if (yield* state.storage.get("deleted")) return;
++              yield* timers.schedule(
++                meta.commandId,
++                "at" in due
++                  ? { at: due.at, payload: { id, command, meta } }
++                  : { after: due.afterMillis, payload: { id, command, meta } },
++              );
++            })),
+           ),
+         state: () => reportDefects(currentMeta),
+         after: (after: number) => reportDefects(eventsAfter(after)),
+@@ -450,11 +479,13 @@
+           .list<ViewEntry>({ prefix: "entry:", start: `entry:${pad(after + 1)}` })
+           .pipe(Effect.map((rows) => [...rows.values()]));
+       return {
++        ...maintenance(state),
+         receive: (key: string, deliveries: ReadonlyArray<Delivery>) =>
+           reportDefects(
+             Effect.gen(function* () {
+               const kick = yield* exclusively(
+                 Effect.gen(function* () {
++                  if (yield* state.storage.get("deleted")) return false;
+                   const before = yield* read;
+                   const result = kit.apply(key, before, deliveries);
+                   if (!result.changed) return false;
+@@ -495,11 +526,12 @@
+               if (kick) yield* outbox.kick;
+             }),
+           ),
+-        read: () => reportDefects(read),
++        read: () => reportDefects(ensurePresent(state).pipe(Effect.andThen(read))),
+         after: (after: number) => reportDefects(entriesAfter(after)),
+         // A live read of this key: accept its WebSocket, then push on every commit.
+         fetch: accept((key, subscription) =>
+           Effect.gen(function* () {
++            yield* ensurePresent(state);
+             const snapshot = yield* read;
+             const entries =
+               subscription.mode === "events" ? yield* entriesAfter(subscription.cursor) : [];
+@@ -517,6 +549,7 @@
+     return Effect.gen(function* () {
+       const inbox = yield* queue<Delivery>("inbox", kit.run);
+       return {
++        ...maintenance(state),
+         receive: (delivery: Delivery) =>
+           reportDefects(
+             Effect.gen(function* () {
+@@ -524,6 +557,7 @@
+               const accepted = yield* exclusively(
+                 state.storage.transaction(
+                   Effect.gen(function* () {
++                    if (yield* state.storage.get("deleted")) return false;
+                     if (yield* state.storage.get(`seen:${id}`)) return false;
+                     yield* state.storage.put(`seen:${id}`, true);
+                     yield* inbox.stage([delivery]);
+@@ -583,7 +617,9 @@
+       // Re-run the drain later: when a short batch has waited long enough, or after a failure.
+       let wake: (at: number) => Effect.Effect<void> = () => Effect.void;
+       const drain: Effect.Effect<void> = Effect.gen(function* () {
+-        if (!(yield* acquire)) return;
++        // A busy lease must not acknowledge the durable alarm: after a crash
++        // the lease can outlive the worker. Let the alarm dispatcher retry it.
++        if (!(yield* acquire)) return yield* Effect.die(new Error("Domain drain lease is still held"));
+         const exit = yield* Effect.exit(
+           Effect.gen(function* () {
+             while (true) {
+@@ -793,7 +829,12 @@
+   });
+ 
+ /** The aggregates, views, policies, projections and streams, each on its own Durable Object class. */
+-const DurableObjectPlatform: Layer.Layer<Platform, never, Worker> = Layer.effect(
++export type AggregateExtension = (name: string, state: Effect.Success<typeof DurableObjectState>, storage: ReturnType<typeof maintenance>) => Effect.Effect<{
++  methods?: Record<string, unknown>;
++  afterCommit?: (id: string) => Effect.Effect<void, never, any>;
++}>;
++
++const DurableObjectPlatform = (extend: AggregateExtension): Layer.Layer<Platform, never, Worker> => Layer.effect(
+   Platform,
+   Effect.gen(function* () {
+     // Factories run while the Domain's Layer is built, inside the Worker's
+@@ -808,19 +849,19 @@
+           Effect.gen(function* () {
+             const namespace = yield* declare(
+               `${aggregate.aggregateName}Aggregate`,
+-              aggregateObject(kit),
++              aggregateObject(kit, extend),
+             );
+             return {
+               send: (id, command, meta) =>
+-                unwrapDefects(namespace.getByName(id).send(id, command, meta)),
++                unwrapDefects(() => namespace.getByName(id).send(id, command, meta)),
+               schedule: (id, command, meta, due) =>
+-                unwrapDefects(namespace.getByName(id).schedule(id, command, meta, due)),
+-              state: (id) => unwrapDefects(namespace.getByName(id).state()),
++                unwrapDefects(() => namespace.getByName(id).schedule(id, command, meta, due)),
++              state: (id) => unwrapDefects(() => namespace.getByName(id).state()),
+               // Streamed responses poll; WebSocket reads (`connect`) are pushed on commit.
+               changes: (id) =>
+                 Stream.fromEffectSchedule(
+                   unwrapDefects<{ state: Json | null; version: number }>(
+-                    namespace.getByName(id).state(),
++                    () => namespace.getByName(id).state(),
+                   ),
+                   POLL,
+                 ).pipe(Stream.changesWith((a, b) => a.version === b.version)),
+@@ -829,7 +870,7 @@
+                   from,
+                   (cursor) =>
+                     unwrapDefects<ReadonlyArray<StoredEvent>>(
+-                      namespace.getByName(id).after(cursor),
++                      () => namespace.getByName(id).after(cursor),
+                     ),
+                   (event) => event.envelope.seq,
+                 ),
+@@ -842,12 +883,12 @@
+           Effect.gen(function* () {
+             const namespace = yield* declare(`${view.viewName}View`, viewObject(kit));
+             const read = (key: string) =>
+-              unwrapDefects<ViewSnapshot>(namespace.getByName(key).read());
++              unwrapDefects<ViewSnapshot>(() => namespace.getByName(key).read());
+             const after = (key: string, cursor: number) =>
+-              unwrapDefects<ReadonlyArray<ViewEntry>>(namespace.getByName(key).after(cursor));
++              unwrapDefects<ReadonlyArray<ViewEntry>>(() => namespace.getByName(key).after(cursor));
+             return {
+               receive: (key, deliveries) =>
+-                unwrapDefects(namespace.getByName(key).receive(key, deliveries)),
++                unwrapDefects(() => namespace.getByName(key).receive(key, deliveries)),
+               read,
+               // Streamed responses poll; WebSocket reads (`connect`) are pushed on commit.
+               changes: (key) =>
+@@ -885,10 +926,10 @@
+             );
+             return {
+               receive: (delivery) =>
+-                unwrapDefects(namespace.getByName(delivery.key).receive(delivery.key, delivery)),
++                unwrapDefects(() => namespace.getByName(delivery.key).receive(delivery.key, delivery)),
+               checkpoints: (key) =>
+                 unwrapDefects<Readonly<Record<string, number>>>(
+-                  namespace.getByName(key).checkpoints(),
++                  () => namespace.getByName(key).checkpoints(),
+                 ),
+             };
+           }),
+@@ -898,13 +939,13 @@
+           Effect.gen(function* () {
+             const namespace = yield* declare(`${stream.streamName}Stream`, streamObject(kit));
+             const read = (key: string) =>
+-              unwrapDefects<StreamMeta>(namespace.getByName(key).read());
++              unwrapDefects<StreamMeta>(() => namespace.getByName(key).read());
+             const after = (key: string, cursor: number) =>
+-              unwrapDefects<ReadonlyArray<StreamEntry>>(namespace.getByName(key).after(cursor));
++              unwrapDefects<ReadonlyArray<StreamEntry>>(() => namespace.getByName(key).after(cursor));
+             return {
+-              append: (key, write) => unwrapDefects(namespace.getByName(key).append(key, write)),
++              append: (key, write) => unwrapDefects(() => namespace.getByName(key).append(key, write)),
+               advance: (key, checkpoints) =>
+-                unwrapDefects(namespace.getByName(key).advance(checkpoints)),
++                unwrapDefects(() => namespace.getByName(key).advance(checkpoints)),
+               read,
+               // Streamed responses poll; WebSocket reads (`connect`) are pushed on append.
+               changes: (key) =>
+@@ -928,7 +969,7 @@
+             const namespace = yield* declare(`${policy.policyName}Policy`, policyObject(kit));
+             return {
+               receive: (delivery) =>
+-                unwrapDefects(namespace.getByName(delivery.key).receive(delivery)),
++                unwrapDefects(() => namespace.getByName(delivery.key).receive(delivery)),
+             };
+           }),
+         ),
+@@ -978,5 +1019,10 @@
+  * @provides Domain.Platform
+  * @provides WorkflowEngine
+  */
+-export const DurableObjects: Layer.Layer<Platform | WorkflowEngine.WorkflowEngine, never, Worker> =
+-  Layer.merge(DurableObjectPlatform, DurableObjectEngine);
++
++
++/** Optional service-binding extension; never exposed through Domain.Api. */
++export const durableObjectsWith = (extend: AggregateExtension): Layer.Layer<Platform | WorkflowEngine.WorkflowEngine, never, Worker> =>
++  Layer.merge(DurableObjectPlatform(extend), DurableObjectEngine);
++
++export const DurableObjects = durableObjectsWith(() => Effect.succeed({}));
