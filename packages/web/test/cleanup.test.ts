@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { init, update, Message } from "../src/App.ts";
+import { init } from "../src/application/init.ts";
+import { update } from "../src/application/update.ts";
+import { Message } from "../src/application/definition.ts";
 import { emptyBoard } from "@retro/domain/Room/Values";
 
 const finished = () => ({

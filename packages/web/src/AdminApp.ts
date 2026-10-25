@@ -1,10 +1,14 @@
-import { RoomSummaries as Rooms, DeleteResponse } from "@retro/domain/HttpContracts";
+import {
+  RoomSummaries as Rooms,
+  DeleteResponse,
+} from "@retro/domain/HttpContracts";
 import * as Match from "effect/Match";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Command, Runtime, type Update } from "foldkit";
+import { Block, Program, Runtime } from "foldkit";
+import * as Layer from "effect/Layer";
 import { defineMessageUnion } from "foldkit/message";
-import type { HtmlBuilder, Document } from "foldkit/html";
+import type { Document } from "foldkit/html";
 import { Button, Input } from "@foldkit/ui";
 import { templates } from "@retro/domain/Room/Templates";
 
@@ -39,73 +43,82 @@ export const Message = defineMessageUnion({
 
 type Message = typeof Message.Type;
 
-const Load = Command.define("LoadAdminRooms", {
-  messages: [Message.Loaded, Message.Failed],
-  execute: Effect.tryPromise(async () => {
-    const response = await fetch("/admin/api/rooms", { cache: "no-store" });
-
-    if (!response.ok) throw new Error();
-
-    return Message.Loaded({
-      rooms: Schema.decodeUnknownSync(Rooms)(await response.json()),
-    });
-  }).pipe(
-    Effect.catch(() =>
-      Effect.succeed(
-        Message.Failed({
-          error:
-            "Couldn’t load the rooms. Refresh to try again. If your session expired, reload this page to sign in.",
-        }),
-      ),
-    ),
-  ),
+export const AdminDefinition = Block.makeDefinition("Admin", {
+  Model,
+  Message,
 });
 
-const Delete = Command.define("DeleteAdminRoom", {
+export const AdminComposition = AdminDefinition.makeComposition();
+
+const Load = AdminDefinition.makeCommand("Load", {
+  messages: [Message.Loaded, Message.Failed],
+  handler: function* () {
+    return () =>
+      Effect.tryPromise(async () => {
+        const response = await fetch("/admin/api/rooms", { cache: "no-store" });
+
+        if (!response.ok) throw new Error();
+
+        return Message.Loaded({
+          rooms: Schema.decodeUnknownSync(Rooms)(await response.json()),
+        });
+      }).pipe(
+        Effect.catch(() =>
+          Effect.succeed(
+            Message.Failed({
+              error:
+                "Couldn’t load the rooms. Refresh to try again. If your session expired, reload this page to sign in.",
+            }),
+          ),
+        ),
+      );
+  },
+});
+
+const Delete = AdminDefinition.makeCommand("Delete", {
   args: { id: Schema.String, title: Schema.String },
   messages: [Message.Deleted, Message.Failed],
-  execute: ({ id, title }) =>
-    Effect.tryPromise(async () => {
-      const response = await fetch("/admin/api/rooms", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, title }),
-      });
+  handler: function* () {
+    return ({ id, title }) =>
+      Effect.tryPromise(async () => {
+        const response = await fetch("/admin/api/rooms", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, title }),
+        });
 
-      const result = Schema.decodeUnknownSync(DeleteResponse)(
-        await response.json(),
-      );
+        const result = Schema.decodeUnknownSync(DeleteResponse)(
+          await response.json(),
+        );
 
-      if (!response.ok || !result.deleted) throw new Error();
+        if (!response.ok || !result.deleted) throw new Error();
 
-      return Message.Deleted({ id });
-    }).pipe(
-      Effect.catch(() =>
-        Effect.succeed(
-          Message.Failed({
-            error:
-              "Deletion could not finish. Refresh and retry to complete cleanup.",
-          }),
+        return Message.Deleted({ id });
+      }).pipe(
+        Effect.catch(() =>
+          Effect.succeed(
+            Message.Failed({
+              error:
+                "Deletion could not finish. Refresh and retry to complete cleanup.",
+            }),
+          ),
         ),
-      ),
-    ),
+      );
+  },
 });
 
-export const update = (
-  m: Model,
-  msg: Message,
-): Update.Return<Model, Message> => {
+export const update = AdminComposition.makeUpdate((m, msg) => {
   return Match.value(msg).pipe(
     Match.tagsExhaustive({
-      Loaded: (msg): Update.Return<Model, Message> => {
+      Loaded: (msg) => {
         return { model: { ...m, rooms: msg.rooms, loading: false, error: "" } };
       },
-      Failed: (msg): Update.Return<Model, Message> => {
+      Failed: (msg) => {
         return {
           model: { ...m, loading: false, deleting: false, error: msg.error },
         };
       },
-      Refresh: (): Update.Return<Model, Message> => {
+      Refresh: () => {
         if (m.deleting) return { model: m };
 
         return {
@@ -113,13 +126,13 @@ export const update = (
           commands: [Load()],
         };
       },
-      Search: (msg): Update.Return<Model, Message> => {
+      Search: (msg) => {
         return { model: { ...m, search: msg.value } };
       },
-      Filter: (msg): Update.Return<Model, Message> => {
+      Filter: (msg) => {
         return { model: { ...m, filter: msg.value } };
       },
-      Select: (msg): Update.Return<Model, Message> => {
+      Select: (msg) => {
         if (m.deleting || m.loading) return { model: m };
 
         return {
@@ -134,10 +147,10 @@ export const update = (
           },
         };
       },
-      Confirm: (msg): Update.Return<Model, Message> => {
+      Confirm: (msg) => {
         return { model: { ...m, confirmation: msg.value } };
       },
-      Delete: (): Update.Return<Model, Message> => {
+      Delete: () => {
         const room = m.rooms.find((r) => r.id === m.selected);
 
         if (!room || m.deleting || m.confirmation !== room.title)
@@ -148,7 +161,7 @@ export const update = (
           commands: [Delete({ id: room.id, title: room.title })],
         };
       },
-      DeleteAll: (): Update.Return<Model, Message> => {
+      DeleteAll: () => {
         const room = m.rooms[0];
 
         if (
@@ -172,7 +185,7 @@ export const update = (
           commands: [Delete({ id: room.id, title: room.title })],
         };
       },
-      Deleted: (msg): Update.Return<Model, Message> => {
+      Deleted: (msg) => {
         if (m.selected === "__all__") {
           const pending = m.pending.filter((room) => room.id !== msg.id);
           const next = pending[0];
@@ -209,9 +222,9 @@ export const update = (
       },
     }),
   );
-};
+});
 
-const view = (m: Model, h: HtmlBuilder<Message>): Document => {
+const view = AdminComposition.makeView((m, h): Document => {
   const button = (
     label: string,
     message: Message,
@@ -434,7 +447,8 @@ const view = (m: Model, h: HtmlBuilder<Message>): Document => {
               ],
             ),
             ...rooms.map((r) =>
-              h.article(
+              h.keyed("article")(
+                r.id,
                 [h.Class("admin-room")],
                 [
                   h.div(
@@ -562,34 +576,44 @@ const view = (m: Model, h: HtmlBuilder<Message>): Document => {
       ],
     ),
   };
-};
+});
+
+const init = AdminComposition.makeInit(() => ({
+  model: {
+    rooms: [],
+    pending: [],
+    bulkTotal: 0,
+    loading: true,
+    deleting: false,
+    search: "",
+    filter: "",
+    selected: "",
+    confirmation: "",
+    error: "",
+    notice: "",
+  },
+  commands: [Load()],
+}));
+
+const prepare = () =>
+  AdminComposition.prepareBlock({
+    init,
+    update,
+    view,
+    EffectsLayer: Layer.mergeAll(Load.layer, Delete.layer),
+  });
+
+export const AdminBlock: Block.FromAssemblyWithView<
+  typeof Model,
+  typeof prepare
+> = Block.assemble(prepare);
 
 export function startAdmin() {
   Runtime.run(
-    Runtime.makeApplication({
-      Model,
-      Flags: Schema.Struct({}),
-      init: () => ({
-        model: {
-          rooms: [],
-          pending: [],
-          bulkTotal: 0,
-          loading: true,
-          deleting: false,
-          search: "",
-          filter: "",
-          selected: "",
-          confirmation: "",
-          error: "",
-          notice: "",
-        },
-        commands: [Load()],
-      }),
-      update,
-      view,
+    Program.make({
+      block: AdminBlock,
       container: document.getElementById("root"),
       devTools: false,
     }),
-    { flags: Effect.succeed({}) },
   );
 }

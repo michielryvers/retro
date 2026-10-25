@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
-import { Message, update } from "../src/AdminApp.ts";
+import { Message } from "../src/AdminApp.ts";
+import { update } from "../src/AdminApp.ts";
 
 const rooms = ["First", "Second"].map((title, i) => ({
   id: `room-${i}`,

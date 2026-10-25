@@ -10,7 +10,7 @@ import { RetroApi } from "@retro/domain/RetroApi.api";
 import { RoomId } from "@retro/domain/Room/Room.id";
 import { inviteToken } from "../src/inviteToken.ts";
 import { SessionLive } from "../../server/src/Session.ts";
-import { Enter } from "../src/App.ts";
+import { Enter } from "../src/application/command.ts";
 
 const World = SessionLive.pipe(
   Layer.provideMerge(Retro.layer(RoomRetentionLive.pipe(Layer.provide(RoomCleanup.toLayer(Effect.succeed({ remove: () => Effect.die("Unexpected retention cleanup") })))))),
@@ -72,6 +72,7 @@ it("enters as an invited participant without facilitator invitation links", asyn
         participantId,
         token,
       }).effect.pipe(
+        Effect.provide(Enter.layer),
         Effect.provideService(RetroApi.Client, {
           ...api,
           JoinRoom: (input) => api.JoinRoom(input, guest),

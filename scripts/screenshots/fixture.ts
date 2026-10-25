@@ -1,4 +1,5 @@
-import { init, type Model } from "../../packages/web/src/App.ts";
+import { init } from "../../packages/web/src/application/init.ts";
+import { type Model } from "../../packages/web/src/application/definition.ts";
 import { emptyBoard } from "../../packages/domain/src/Room/Values.ts";
 
 // Fictional, fixed content. This fixture never connects to a room or stores invitations.

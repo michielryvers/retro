@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { init, Message, update } from "../src/App.ts";
+import { init } from "../src/application/init.ts";
+import { Message } from "../src/application/definition.ts";
+import { update } from "../src/application/update.ts";
 import { updateWithDrafts } from "../src/draftPersistence.ts";
 import { emptyBoard } from "@retro/domain/Room/Values";
 

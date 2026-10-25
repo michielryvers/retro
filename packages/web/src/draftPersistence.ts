@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
-import { update, type Model, type Message } from "./App.ts";
+import { update } from "./application/update.ts";
+import { type Model, type Message } from "./application/definition.ts";
 
 const CategoryValues = Schema.Record(Schema.String, Schema.String);
 
