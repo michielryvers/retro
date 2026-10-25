@@ -1,118 +1,47 @@
-import { InvitationPreview } from "@retro/domain/HttpContracts";
-import { Template } from "@retro/domain/Room/Templates";
+import { NavigationBlock } from "../features/Navigation.ts";
+import { NoticeBlock } from "../features/Notice.ts";
+import { SessionControlsBlock } from "../features/SessionControls.ts";
+import { CombiningBlock } from "../features/Combining.ts";
+import { LifecycleBlock } from "../features/Lifecycle.ts";
+import { NotesBlock } from "../features/Notes.ts";
+import { ActionEditorBlock } from "../features/ActionEditor.ts";
+import { EntryBlock, Flags } from "../features/Entry.ts";
+
+export { Flags } from "../features/Entry.ts";
+
+import { TimerBlock } from "../features/Timer.ts";
+import { HandoverBlock } from "../features/Handover.ts";
+import { InvitationsBlock, InviteLink } from "../features/Invitations.ts";
+
 import * as Schema from "effect/Schema";
 import { Block } from "foldkit";
 import { defineMessageUnion } from "foldkit/message";
-import { BoardState, PrivateState, Column } from "@retro/domain/Room/Values";
-
-export const Op = Schema.Literals([
-  "save",
-  "delete",
-  "ready",
-  "reveal",
-  "startVote",
-  "vote",
-  "votingDone",
-  "finishVote",
-  "action",
-  "deleteAction",
-  "close",
-  "archive",
-  "restore",
-]);
-
-export const ToolAction = Schema.Literals([
-  "start",
-  "pause",
-  "resume",
-  "extend",
-  "stop",
-  "handover",
-  "undo",
-  "split",
-]);
-
-export const Field = Schema.Literals([
-  "password",
-  "inviteName",
-  "handoverTo",
-  "deleteTitle",
-  "name",
-  "title",
-  "draft",
-  "action",
-  "owner",
-  "due",
-]);
-
-export const Flags = Schema.Struct({
-  participantId: Schema.String,
-  inviteToken: Schema.String,
-  actorId: Schema.String,
-  roomId: Schema.String,
-  name: Schema.String,
-});
-
-export const InviteLink = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  url: Schema.String,
-});
+import { BoardState, PrivateState } from "@retro/domain/Room/Values";
 
 export const Model = Schema.Struct({
-  invitationPreview: Schema.NullOr(InvitationPreview),
+  navigation: NavigationBlock.Model,
+  actionEditor: ActionEditorBlock.Model,
+  sessionControls: SessionControlsBlock.Model,
+  combining: CombiningBlock.Model,
+  lifecycle: LifecycleBlock.Model,
+  notes: NotesBlock.Model,
+  entry: EntryBlock.Model,
+  invitations: InvitationsBlock.Model,
+  timer: TimerBlock.Model,
+  handover: HandoverBlock.Model,
   sessionId: Schema.String,
-  participantId: Schema.String,
-  inviteToken: Schema.String,
-  password: Schema.String,
-  showPassword: Schema.Boolean,
   unavailable: Schema.Boolean,
-  inviteLoading: Schema.Boolean,
-  inviteError: Schema.String,
-  inviteName: Schema.String,
-  inviteLinks: Schema.Array(InviteLink),
   actorId: Schema.String,
   roomId: Schema.String,
-  name: Schema.String,
   toolsOpen: Schema.Boolean,
   mobileMenu: Schema.Boolean,
   roomSection: Schema.Literals(["people", "timer", "handover"]),
-  handoverTo: Schema.String,
-  now: Schema.Number,
-  deleteTitle: Schema.String,
-  cleanup: Schema.Boolean,
-  manageRoom: Schema.Boolean,
-  title: Schema.String,
-  template: Template,
   entered: Schema.Boolean,
   board: Schema.NullOr(BoardState),
   private: PrivateState,
-  busy: Schema.Boolean,
-  pendingVote: Schema.String,
-  dragSource: Schema.String,
-  dropTarget: Schema.String,
-  mergeSource: Schema.String,
-  mergeTarget: Schema.String,
-  screen: Schema.Literals(["board", "actions"]),
-  mobileColumn: Column,
-  categoryDirection: Schema.Literals(["next", "previous", "none"]),
-  actionsOnly: Schema.Boolean,
-  voteSort: Schema.Literals(["highest", "lowest", "original"]),
   error: Schema.String,
-  notice: Schema.String,
-  editor: Schema.NullOr(Column),
-  editId: Schema.String,
-  draft: Schema.String,
-  drafts: Schema.Record(Schema.String, Schema.String),
-  draftIds: Schema.Record(Schema.String, Schema.String),
-  selected: Schema.String,
-  action: Schema.String,
-  actionId: Schema.String,
-  actionDraftId: Schema.String,
-  owner: Schema.String,
-  due: Schema.String,
+  notice: NoticeBlock.Model,
   invite: Schema.Boolean,
-  confirm: Schema.String,
   connected: Schema.Boolean,
   reconnect: Schema.Int,
 });
@@ -120,33 +49,20 @@ export const Model = Schema.Struct({
 export type Model = typeof Model.Type;
 
 export const Message = defineMessageUnion({
-  PreviewLoaded: { preview: Schema.NullOr(InvitationPreview) },
   Tools: {},
-  TogglePassword: {},
+
   RoomUnavailable: {},
   CheckRoom: {},
-  ClearNotice: { text: Schema.String },
-  InvitesFailed: { reason: Schema.String },
-  RetryInvites: {},
-  Split: { id: Schema.String },
+
   MobileMenu: {},
   CloseRoom: {},
   RoomSection: { section: Schema.Literals(["people", "timer", "handover"]) },
-  Tick: { now: Schema.Number },
-  Tool: { action: ToolAction, seconds: Schema.Int },
-  ToolDone: { board: Schema.NullOr(BoardState), notice: Schema.String },
-  Field: { field: Field, value: Schema.String },
-  Enter: {},
+
   DragStart: { id: Schema.String },
   DragEnd: {},
   DragOver: { id: Schema.String },
   Drop: { id: Schema.String },
-  MergePick: { id: Schema.String },
-  MergeTarget: { id: Schema.String },
-  MergeCancel: {},
-  MergeConfirm: {},
-  Combined: { board: BoardState, noteId: Schema.String },
-  Template: { template: Template },
+
   NeedsJoin: {},
   Entered: {
     roomId: Schema.String,
@@ -155,29 +71,13 @@ export const Message = defineMessageUnion({
   },
   Board: { board: Schema.NullOr(BoardState) },
   Private: { state: Schema.NullOr(PrivateState) },
-  Failed: { reason: Schema.String },
+
   WatchFailed: { reason: Schema.String },
-  Edit: { column: Column, id: Schema.String, text: Schema.String },
-  CancelEdit: {},
-  Select: { id: Schema.String },
-  EditAction: { id: Schema.String },
-  Run: { op: Op, id: Schema.String, selected: Schema.Boolean },
-  Succeeded: { op: Op },
-  VoteSaved: { state: Schema.NullOr(PrivateState) },
-  Screen: { screen: Schema.Literals(["board", "actions"]) },
-  MobileColumn: { column: Column },
-  ToggleActions: {},
-  VoteSort: { order: Schema.Literals(["highest", "lowest", "original"]) },
-  Confirm: { op: Schema.String },
+
   Invite: {},
-  AddInvite: {},
-  InvitesLoaded: { links: Schema.Array(InviteLink) },
-  Copy: { url: Schema.String },
+
   Notify: { text: Schema.String },
-  Export: {},
-  Cleanup: {},
-  ManageRoom: {},
-  DeleteRoom: {},
+
   Retry: {},
 });
 
@@ -186,4 +86,5 @@ export type Message = typeof Message.Type;
 export const ApplicationDefinition = Block.makeDefinition("Application", {
   Model,
   Message,
+  ChildInitContext: Flags,
 });

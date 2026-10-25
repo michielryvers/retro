@@ -1,3 +1,7 @@
+import {
+  NavigationBinding,
+  navigationContext,
+} from "../../packages/web/src/application/composition.ts";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -17,9 +21,40 @@ const root = resolve(import.meta.dirname, "../..");
 
 // Render the same checked composition with deterministic initial state. Server
 // rendering does not run Commands or construct the live RPC service.
+const {
+  navigation: _navigation,
+  notice: _notice,
+  sessionControls: _sessionControls,
+  combining: _combining,
+  lifecycle: _lifecycle,
+  notes: _notes,
+  actionEditor: _actionEditor,
+  entry: _entry,
+  invitations: _invitations,
+  timer: _timer,
+  handover: _handover,
+  ...demoFields
+} = demo;
+
 const prepare = () =>
   ApplicationComposition.prepareBlock({
-    init: ApplicationComposition.makeInit(() => ({ model: demo })),
+    init: ApplicationComposition.makeInit(() => ({
+      model: demoFields,
+      steps: [
+        NavigationBinding.informRoom(navigationContext(demo)),
+        NavigationBinding.focusColumn(
+          { column: "stop" },
+          navigationContext(demo),
+        ),
+      ],
+      childInitContext: {
+        actorId: "avery",
+        roomId: "demo",
+        participantId: "",
+        inviteToken: "",
+        name: "Avery",
+      },
+    })),
     view,
     update,
     EffectsLayer,

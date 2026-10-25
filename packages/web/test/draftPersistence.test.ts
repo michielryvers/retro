@@ -1,187 +1,158 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { init } from "../src/application/init.ts";
-import { Message } from "../src/application/definition.ts";
-import { update } from "../src/application/update.ts";
-import { updateWithDrafts } from "../src/draftPersistence.ts";
+import { Effect } from "effect";
+import { NotesBlock, Load, Persist } from "../src/features/Notes.ts";
 import { emptyBoard } from "@retro/domain/Room/Values";
 
-const base = () =>
-  init({
-    actorId: "session",
-    roomId: "room",
-    participantId: "",
-    inviteToken: "",
-    name: "Host",
-  }).model;
+const { Message } = NotesBlock;
 
-const board = {
-  ...emptyBoard,
-  phase: "write" as const,
-  grants: [{ sessionId: "session", participantId: "host" }],
+const context = {
+  roomId: "room",
+  actorId: "host",
+  board: { ...emptyBoard, phase: "write" as const },
+  column: "mad",
+  busy: false,
 };
-
-const enter = () =>
-  updateWithDrafts(base(), Message.Entered({ roomId: "room", board })).model;
 
 let stored: Record<string, string>;
 
 beforeEach(() => {
   stored = {};
   vi.stubGlobal("localStorage", {
-    getItem: (key: string) => stored[key] ?? null,
-    setItem: (key: string, value: string) => {
-      stored[key] = value;
+    getItem: (k: string) => stored[k] ?? null,
+    setItem: (k: string, v: string) => {
+      stored[k] = v;
     },
-    removeItem: (key: string) => {
-      delete stored[key];
+    removeItem: (k: string) => {
+      delete stored[k];
     },
   });
 });
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("restores each category after refresh, scoped to room and participant", () => {
-  let model = updateWithDrafts(
-    enter(),
-    Message.Field({ field: "draft", value: "Mad draft" }),
-  ).model;
-
-  model = updateWithDrafts(
-    model,
-    Message.MobileColumn({ column: "sad" }),
-  ).model;
-  updateWithDrafts(
-    model,
-    Message.Field({ field: "draft", value: "Sad draft" }),
-  );
-  expect(enter().drafts).toEqual({
-    mad: "Mad draft",
-    sad: "Sad draft",
-  });
-
-  const other = updateWithDrafts(
-    base(),
-    Message.Entered({ roomId: "other", board }),
-  ).model;
-
-  expect(other.draft).toBe("");
-
-  const person = updateWithDrafts(
-    base(),
-    Message.Entered({
+const persist = (model: typeof NotesBlock.Model.Type) =>
+  Effect.runPromise(
+    Persist({
       roomId: "room",
-      board: {
-        ...board,
-        grants: [{ sessionId: "session", participantId: "guest" }],
-      },
-    }),
-  ).model;
-
-  expect(person.draft).toBe("");
-});
-
-it("retains a stable note id through a failed save and reload, then clears only the saved draft", () => {
-  let model = updateWithDrafts(
-    enter(),
-    Message.Field({ field: "draft", value: "Retry me" }),
-  ).model;
-
-  const first = updateWithDrafts(
-    model,
-    Message.Run({ op: "save", id: "", selected: false }),
+      actorId: "host",
+      drafts: model.drafts,
+      draftIds: model.draftIds,
+    }).effect.pipe(Effect.provide(Persist.layer)),
   );
 
-  const id = first.commands?.[0]?.args?.id;
-  expect(id).toBeTruthy();
-  model = updateWithDrafts(
-    first.model,
-    Message.Failed({ reason: "Lost acknowledgement" }),
-  ).model;
-  expect(model.draft).toBe("Retry me");
-
-  const retry = updateWithDrafts(
-    enter(),
-    Message.Run({ op: "save", id: "", selected: false }),
+const load = (roomId = "room", actorId = "host") =>
+  Effect.runPromise(
+    Load({ roomId, actorId, revision: 0 }).effect.pipe(
+      Effect.provide(Load.layer),
+    ),
   );
 
-  expect(retry.commands?.[0]?.args?.id).toBe(id);
-  updateWithDrafts(retry.model, Message.Succeeded({ op: "save" }));
-  expect(enter().draft).toBe("");
-  expect(stored).toEqual({});
+it("restores categories and stable ids scoped to room and participant", async () => {
+  const m = {
+    ...NotesBlock.init().model,
+    drafts: { mad: "Mad draft", sad: "Sad draft" },
+    draftIds: { mad: "stable-id" },
+  };
+
+  await persist(m);
+  expect(await load()).toMatchObject({
+    drafts: m.drafts,
+    draftIds: m.draftIds,
+  });
+  expect(await load("other")).toMatchObject({ drafts: {} });
+  expect(await load("room", "guest")).toMatchObject({ drafts: {} });
 });
 
-it("preserves a new draft while editing an existing note, and clears on closure", () => {
-  const model = updateWithDrafts(
-    enter(),
-    Message.Field({ field: "draft", value: "New" }),
+it("retains a stable id after a lost acknowledgement and clears only the saved draft", async () => {
+  let m = {
+    ...NotesBlock.init().model,
+    draft: "Retry",
+    drafts: { mad: "Retry", sad: "Other" },
+    busy: true,
+  };
+
+  const prepared = NotesBlock.update(
+    m,
+    Message.Prepared({ id: "stable" }),
+    context,
   ).model;
 
-  const edit = updateWithDrafts(
-    model,
-    Message.Edit({ column: "mad", id: "old", text: "Existing" }),
+  await persist(prepared);
+
+  const restored = NotesBlock.update(
+    NotesBlock.init().model,
+    await load(),
+    context,
   ).model;
 
-  updateWithDrafts(edit, Message.Field({ field: "draft", value: "Edited" }));
-  expect(enter().draft).toBe("New");
-  updateWithDrafts(
-    model,
-    Message.Board({ board: { ...board, phase: "closed" } }),
-  );
-  expect(stored).toEqual({});
+  const retry = NotesBlock.update(restored, Message.Save(), context);
+  expect(retry.commands?.[0]?.args).toMatchObject({
+    id: "stable",
+    text: "Retry",
+  });
+  const saved = NotesBlock.update(retry.model, Message.Saved(), context).model;
+  await persist(saved);
+  expect(await load()).toMatchObject({
+    drafts: { mad: "", sad: "Other" },
+    draftIds: { mad: "" },
+  });
 });
 
-it("tolerates unavailable storage and reports that drafts cannot be backed up", () => {
+it("does not overwrite newly typed text with a late hydration response", () => {
+  const typed = NotesBlock.update(
+    NotesBlock.init().model,
+    Message.Changed({ value: "New typing" }),
+    context,
+  ).model;
+
+  const hydrated = NotesBlock.update(
+    typed,
+    Message.Loaded({ drafts: { mad: "Old" }, draftIds: {}, revision: 0 }),
+    context,
+  ).model;
+
+  expect(hydrated.draft).toBe("New typing");
+});
+
+it("clears backup on conclusion or deletion", async () => {
+  for (const board of [{ ...emptyBoard, phase: "closed" as const }, null]) {
+    const m = {
+      ...NotesBlock.init().model,
+      draft: "Private",
+      drafts: { mad: "Private" },
+    };
+
+    await persist(m);
+
+    const cleared = NotesBlock.update(
+      m,
+      Message.InformedOfRoom({ load: false }),
+      { ...context, board },
+    ).model;
+
+    await persist(cleared);
+    expect(stored).toEqual({});
+  }
+});
+
+it("tolerates corrupt or unavailable storage and keeps the draft", async () => {
+  stored["cg_drafts_v2:room:host"] = "{broken";
+  expect(await load()).toEqual(Message.BackupFailed());
   vi.stubGlobal("localStorage", {
-    getItem: () => null,
     setItem: () => {
-      throw new Error("Quota");
+      throw Error("Quota");
     },
   });
 
-  const result = updateWithDrafts(
-    enter(),
-    Message.Field({ field: "draft", value: "Still here" }),
-  ).model;
+  const m = {
+    ...NotesBlock.init().model,
+    draft: "Still here",
+    drafts: { mad: "Still here" },
+  };
 
-  expect(result.draft).toBe("Still here");
-  expect(result.notice).toContain("Keep this tab open");
-});
-
-it("does not clear drafts on connection failure or reconnect", () => {
-  const model = updateWithDrafts(
-    enter(),
-    Message.Field({ field: "draft", value: "Offline" }),
-  ).model;
-
-  const disconnected = update(
-    model,
-    Message.WatchFailed({ reason: "Offline" }),
-  ).model;
-
-  const retry = update(disconnected, Message.Retry()).model;
-  expect(retry.draft).toBe("Offline");
-  expect(retry.connected).toBe(false);
-  expect(retry.reconnect).toBe(1);
-});
-
-it("clears the local backup when a room is deleted", () => {
-  const model = updateWithDrafts(
-    enter(),
-    Message.Field({ field: "draft", value: "Private" }),
-  ).model;
-
-  updateWithDrafts(model, Message.RoomUnavailable());
-  expect(stored).toEqual({});
-});
-
-it("ignores malformed backups without preventing entry or later saving", () => {
-  stored["cg_drafts_v2:room:host"] = "{broken";
-  const model = enter();
-  expect(model.entered).toBe(true);
-  expect(model.draft).toBe("");
-  updateWithDrafts(
-    model,
-    Message.Field({ field: "draft", value: "Recovered" }),
-  );
-  expect(enter().draft).toBe("Recovered");
+  const result = NotesBlock.update(m, await persist(m), context);
+  expect(result.model.draft).toBe("Still here");
+  expect(result.outMessage).toMatchObject({
+    text: expect.stringContaining("Keep this tab open"),
+  });
 });

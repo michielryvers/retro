@@ -1,5 +1,5 @@
 import * as Cause from "effect/Cause";
-import * as Effect from "effect/Effect";
+
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { RetroApi } from "@retro/domain/RetroApi.api";
@@ -62,44 +62,6 @@ export const subscriptions = ApplicationDefinition.makeSubscriptions(
             active
               ? Stream.fromEventListener(window, "focus").pipe(
                   Stream.map(() => Message.CheckRoom()),
-                )
-              : Stream.empty;
-        },
-      },
-    ),
-    notice: entry(
-      "notice",
-      { text: Schema.String },
-      {
-        messages: [Message.ClearNotice],
-        modelToDependencies: (m) => ({ text: m.notice }),
-        handler: function* () {
-          return ({ text }) =>
-            text
-              ? Stream.fromEffect(
-                  Effect.sleep("4 seconds").pipe(
-                    Effect.as(Message.ClearNotice({ text })),
-                  ),
-                )
-              : Stream.empty;
-        },
-      },
-    ),
-    clock: entry(
-      "clock",
-      { active: Schema.Boolean },
-      {
-        messages: [Message.Tick],
-        modelToDependencies: (m) => ({
-          active: Boolean(
-            m.entered && m.board?.timer?.endsAt && m.board.phase !== "closed",
-          ),
-        }),
-        handler: function* () {
-          return ({ active }) =>
-            active
-              ? Stream.tick("1 second").pipe(
-                  Stream.map(() => Message.Tick({ now: Date.now() })),
                 )
               : Stream.empty;
         },
