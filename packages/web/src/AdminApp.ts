@@ -1,7 +1,6 @@
 import { AdminDeletionBlock } from "./features/AdminDeletion.ts";
 import { AdminFiltersBlock } from "./features/AdminFilters.ts";
 import { RoomSummaries as Rooms } from "@retro/domain/HttpContracts";
-import * as Match from "effect/Match";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Block, Program, Runtime } from "foldkit";
@@ -82,27 +81,23 @@ const Load = AdminDefinition.makeCommand("Load", {
   },
 });
 
-export const update = AdminComposition.makeUpdate((m, msg) => {
-  return Match.value(msg).pipe(
-    Match.tagsExhaustive({
-      Loaded: (msg) => {
-        return { model: { ...m, rooms: msg.rooms, loading: false, error: "" } };
-      },
-      Failed: (msg) => {
-        return {
-          model: { ...m, loading: false, error: msg.error },
-        };
-      },
-      Refresh: () => {
-        if (m.deletion.deleting) return { model: m };
+export const update = AdminComposition.makeUpdate({
+  Loaded: (m, msg) => {
+    return { model: { ...m, rooms: msg.rooms, loading: false, error: "" } };
+  },
+  Failed: (m, msg) => {
+    return {
+      model: { ...m, loading: false, error: msg.error },
+    };
+  },
+  Refresh: (m) => {
+    if (m.deletion.deleting) return { model: m };
 
-        return {
-          model: { ...m, loading: true, error: "" },
-          commands: [Load()],
-        };
-      },
-    }),
-  );
+    return {
+      model: { ...m, loading: true, error: "" },
+      commands: [Load()],
+    };
+  },
 });
 
 const view = AdminComposition.makeView((m, h): Document => {

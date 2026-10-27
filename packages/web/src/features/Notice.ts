@@ -13,14 +13,12 @@ const NoticeDefinition = Block.makeDefinition("Notice", { Model, Message });
 const NoticeComposition = NoticeDefinition.makeComposition();
 const init = NoticeComposition.makeInit(() => ({ model: { text: "" } }));
 
-const update = NoticeComposition.makeUpdate((model, message) =>
-  Message.match(message, {
-    InformedOfNotice: ({ text }) => ({ model: { ...model, text } }),
-    Elapsed: ({ text }) => ({
-      model: { ...model, text: model.text === text ? "" : model.text },
-    }),
+const update = NoticeComposition.makeUpdate({
+  InformedOfNotice: (model, { text }) => ({ model: { ...model, text } }),
+  Elapsed: (model, { text }) => ({
+    model: { ...model, text: model.text === text ? "" : model.text },
   }),
-);
+});
 
 const subscriptions = NoticeDefinition.makeSubscriptions((entry) => ({
   dismiss: entry(

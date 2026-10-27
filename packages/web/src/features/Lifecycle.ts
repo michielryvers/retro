@@ -68,9 +68,8 @@ export const DeleteRetro = LifecycleDefinition.makeCommand("DeleteRetro", {
 
         if (!response.ok)
           throw new Error(
-            Schema.decodeUnknownSync(ErrorResponse)(
-              await response.json(),
-            ).error,
+            Schema.decodeUnknownSync(ErrorResponse)(await response.json())
+              .error,
           );
         window.location.assign("/");
 
@@ -164,16 +163,16 @@ const init = LifecycleComposition.makeInit(() => ({
   model: { manageRoom: false, cleanup: false, deleteTitle: "", busy: false },
 }));
 
-const update = LifecycleComposition.makeUpdate((m, msg, c: LifecycleContext) =>
-  Message.match(msg, {
-    ManageRoom: () => ({
+const update = LifecycleComposition.makeUpdate.withContext(
+  (c: LifecycleContext) => ({
+    ManageRoom: (m) => ({
       model: { ...m, manageRoom: !m.manageRoom, cleanup: false },
     }),
-    Cleanup: () => ({ model: { ...m, cleanup: !m.cleanup, deleteTitle: "" } }),
-    Field: ({ value }) => ({
+    Cleanup: (m) => ({ model: { ...m, cleanup: !m.cleanup, deleteTitle: "" } }),
+    Field: (m, { value }) => ({
       model: m.busy ? m : { ...m, deleteTitle: value },
     }),
-    DeleteRoom: () =>
+    DeleteRoom: (m) =>
       m.busy ||
       c.busy ||
       c.board?.phase !== "closed" ||
@@ -184,11 +183,11 @@ const update = LifecycleComposition.makeUpdate((m, msg, c: LifecycleContext) =>
             model: { ...m, busy: true },
             commands: [DeleteRetro({ roomId: c.roomId, title: m.deleteTitle })],
           },
-    Deleted: () => ({
+    Deleted: (m) => ({
       model: { ...m, busy: false },
       outMessage: OutMessage.Deleted(),
     }),
-    Archive: () =>
+    Archive: (m) =>
       m.busy ||
       c.busy ||
       c.board?.phase !== "closed" ||
@@ -200,20 +199,23 @@ const update = LifecycleComposition.makeUpdate((m, msg, c: LifecycleContext) =>
               Archive({ roomId: c.roomId, archived: !c.board.archived }),
             ],
           },
-    Archived: () => ({ model: { ...m, busy: false } }),
-    Export: () => ({
+    Archived: (m) => ({ model: { ...m, busy: false } }),
+    Export: (m) => ({
       model: m,
       commands: c.board ? [Export({ board: c.board, order: c.voteSort })] : [],
     }),
-    Notify: ({ text }) => ({
+    Notify: (m, { text }) => ({
       model: m,
       outMessage: OutMessage.Notified({ text }),
     }),
-    Failed: ({ reason }) => ({
+    Failed: (m, { reason }) => ({
       model: { ...m, busy: false },
       outMessage: OutMessage.Failed({ reason }),
     }),
-    ToggleActions: () => ({ model: m, outMessage: OutMessage.ToggleActions() }),
+    ToggleActions: (m) => ({
+      model: m,
+      outMessage: OutMessage.ToggleActions(),
+    }),
   }),
 );
 

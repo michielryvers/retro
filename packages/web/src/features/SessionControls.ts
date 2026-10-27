@@ -159,83 +159,80 @@ const init = SessionControlsComposition.makeInit(() => ({
   model: { busy: false, pendingVote: "", confirm: "", phase: "" },
 }));
 
-const update = SessionControlsComposition.makeUpdate(
-  (m, msg, c: SessionControlsContext) =>
-    Message.match(msg, {
-      Confirm: ({ op }) =>
-        !c.board || c.board.adminId !== c.actorId || c.editingAction
-          ? { model: m }
-          : {
-              model: { ...m, confirm: op },
-              commands: [
-                FocusControl({
-                  selector: op
-                    ? ".confirm-bar button"
-                    : ".session-footer .primary",
-                }),
-              ],
+const update = SessionControlsComposition.makeUpdate.withContext(
+  (c: SessionControlsContext) => ({
+    Confirm: (m, { op }) =>
+      !c.board || c.board.adminId !== c.actorId || c.editingAction
+        ? { model: m }
+        : {
+            model: { ...m, confirm: op },
+            commands: [
+              FocusControl({
+                selector: op
+                  ? ".confirm-bar button"
+                  : ".session-footer .primary",
+              }),
+            ],
+          },
+    Run: (m, a) => {
+      if (m.busy || c.busy || !c.board) return { model: m };
+      const phase = c.board.phase;
+      const admin = c.board.adminId === c.actorId;
+
+      const allowed = Match.value(a.op).pipe(
+        Match.when("ready", () => phase === "write" && !c.unsavedNotes),
+        Match.when("vote", () => phase === "vote"),
+        Match.when("votingDone", () => phase === "vote"),
+        Match.when("reveal", () => admin && phase === "write"),
+        Match.when("startVote", () => admin && phase === "reveal"),
+        Match.when("finishVote", () => admin && phase === "vote"),
+        Match.when(
+          "close",
+          () => admin && phase === "actions" && !c.editingAction,
+        ),
+        Match.exhaustive,
+      );
+
+      return !allowed
+        ? { model: m }
+        : {
+            model: {
+              ...m,
+              busy: true,
+              pendingVote: a.op === "vote" ? a.id : "",
+              confirm: "",
             },
-      Run: (a) => {
-        if (m.busy || c.busy || !c.board) return { model: m };
-        const phase = c.board.phase;
-        const admin = c.board.adminId === c.actorId;
-
-        const allowed = Match.value(a.op).pipe(
-          Match.when("ready", () => phase === "write" && !c.unsavedNotes),
-          Match.when("vote", () => phase === "vote"),
-          Match.when("votingDone", () => phase === "vote"),
-          Match.when("reveal", () => admin && phase === "write"),
-          Match.when("startVote", () => admin && phase === "reveal"),
-          Match.when("finishVote", () => admin && phase === "vote"),
-          Match.when(
-            "close",
-            () => admin && phase === "actions" && !c.editingAction,
-          ),
-          Match.exhaustive,
-        );
-
-        return !allowed
-          ? { model: m }
-          : {
-              model: {
-                ...m,
-                busy: true,
-                pendingVote: a.op === "vote" ? a.id : "",
-                confirm: "",
-              },
-              commands: [
-                Mutate({ roomId: c.roomId, actorId: c.actorId, ...a }),
-              ],
-            };
-      },
-      Succeeded: () => ({
-        model: { ...m, busy: false },
-        outMessage: OutMessage.Completed(),
-      }),
-      VoteSaved: ({ state }) => ({
-        model: { ...m, busy: false, pendingVote: "" },
-        outMessage: OutMessage.Voted({ state }),
-      }),
-      Failed: ({ reason }) => ({
-        model: { ...m, busy: false, pendingVote: "" },
-        outMessage: OutMessage.Failed({ reason }),
-      }),
-      Notify: () => ({ model: m }),
-      ToggleActions: () => ({
-        model: m,
-        outMessage: OutMessage.ToggleActions(),
-      }),
-      InformedOfRoom: () => ({
-        model: {
-          ...m,
-          phase: c.board?.phase ?? "",
-          confirm:
-            c.board?.phase !== m.phase || c.board?.adminId !== c.actorId
-              ? ""
-              : m.confirm,
-        },
-      }),
+            commands: [Mutate({ roomId: c.roomId, actorId: c.actorId, ...a })],
+          };
+    },
+    Succeeded: (m) => ({
+      model: { ...m, busy: false },
+      outMessage: OutMessage.Completed(),
     }),
+    VoteSaved: (m, { state }) => ({
+      model: { ...m, busy: false, pendingVote: "" },
+      outMessage: OutMessage.Voted({ state }),
+    }),
+    Failed: (m, { reason }) => ({
+      model: { ...m, busy: false, pendingVote: "" },
+      outMessage: OutMessage.Failed({ reason }),
+    }),
+    Notify: (m) => ({ model: m }),
+    ToggleActions: (m) => ({
+      model: m,
+      outMessage: OutMessage.ToggleActions(),
+    }),
+    InformedOfRoom: (m) => ({
+      model: {
+        ...m,
+        phase: c.board?.phase ?? "",
+        confirm:
+          c.board?.phase !== m.phase || c.board?.adminId !== c.actorId
+            ? ""
+            : m.confirm,
+      },
+    }),
+  }),
 );
 
 const initials = (name: string) =>

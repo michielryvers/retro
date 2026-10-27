@@ -1,7 +1,5 @@
 import { Update } from "foldkit";
 
-import * as Match from "effect/Match";
-
 import { Resume, FocusControl } from "./command.ts";
 import { Model } from "./definition.ts";
 import {
@@ -17,137 +15,132 @@ import {
   markUnavailable,
 } from "./composition.ts";
 
-export const update = ApplicationComposition.makeUpdate((m, msg) => {
-  return Match.value(msg).pipe(
-    Match.tagsExhaustive({
-      CheckRoom: () => ({
-        model: m,
-        commands:
-          m.entered && !isWorking(m)
-            ? [Resume({ roomId: m.roomId, invitation: true })]
-            : [],
-      }),
+export const update = ApplicationComposition.makeUpdate({
+  CheckRoom: (m) => ({
+    model: m,
+    commands:
+      m.entered && !isWorking(m)
+        ? [Resume({ roomId: m.roomId, invitation: true })]
+        : [],
+  }),
 
-      RoomUnavailable: () => markUnavailable(m),
+  RoomUnavailable: (m) => markUnavailable(m),
 
-      CloseRoom: () => ({
+  CloseRoom: (m) => ({
+    model: {
+      ...m,
+      mobileMenu: false,
+      invite: false,
+      toolsOpen: false,
+    } satisfies Model,
+  }),
+  MobileMenu: (m) =>
+    Update.combineSteps([
+      () => ({
         model: {
           ...m,
-          mobileMenu: false,
-          invite: false,
+          mobileMenu: true,
+          roomSection: "people",
+          invite: m.board?.adminId === m.actorId,
           toolsOpen: false,
         } satisfies Model,
       }),
-      MobileMenu: () =>
-        Update.combineSteps([
-          () => ({
-            model: {
-              ...m,
-              mobileMenu: true,
-              roomSection: "people",
-              invite: m.board?.adminId === m.actorId,
-              toolsOpen: false,
-            } satisfies Model,
-          }),
-          InvitationsBinding.requestLoad(invitationContext(m)),
-        ])(m),
-      RoomSection: (msg) =>
-        Update.combineSteps([
-          () => ({
-            model: {
-              ...m,
-              roomSection: msg.section,
-              mobileMenu: true,
-              invite:
-                msg.section === "people" && m.board?.adminId === m.actorId,
-              toolsOpen: msg.section !== "people",
-            } satisfies Model,
-          }),
-          ...(msg.section === "people"
-            ? [InvitationsBinding.requestLoad(invitationContext(m))]
-            : []),
-        ])(m),
-
-      Tools: () => ({
+      InvitationsBinding.requestLoad(invitationContext(m)),
+    ])(m),
+  RoomSection: (m, msg) =>
+    Update.combineSteps([
+      () => ({
         model: {
           ...m,
-          toolsOpen: !m.toolsOpen,
-          mobileMenu: false,
-          invite: false,
-          roomSection: "timer",
+          roomSection: msg.section,
+          mobileMenu: true,
+          invite: msg.section === "people" && m.board?.adminId === m.actorId,
+          toolsOpen: msg.section !== "people",
         } satisfies Model,
-        commands: [
-          FocusControl({
-            selector: m.toolsOpen
-              ? ".mobile-menu-button, .room-tools-toggle button"
-              : ".controls-surface .controls-close button",
-          }),
-        ],
       }),
+      ...(msg.section === "people"
+        ? [InvitationsBinding.requestLoad(invitationContext(m))]
+        : []),
+    ])(m),
 
-      DragStart: (msg) =>
-        CombiningBinding.dragStart({ id: msg.id }, combiningContext(m))(m),
-      DragEnd: () => CombiningBinding.dragEnd(combiningContext(m))(m),
-      DragOver: (msg) =>
-        CombiningBinding.dragOver({ id: msg.id }, combiningContext(m))(m),
-      Drop: (msg) =>
-        CombiningBinding.drop({ id: msg.id }, combiningContext(m))(m),
+  Tools: (m) => ({
+    model: {
+      ...m,
+      toolsOpen: !m.toolsOpen,
+      mobileMenu: false,
+      invite: false,
+      roomSection: "timer",
+    } satisfies Model,
+    commands: [
+      FocusControl({
+        selector: m.toolsOpen
+          ? ".mobile-menu-button, .room-tools-toggle button"
+          : ".controls-surface .controls-close button",
+      }),
+    ],
+  }),
 
-      NeedsJoin: () => {
-        return { model: m };
-      },
+  DragStart: (m, msg) =>
+    CombiningBinding.dragStart({ id: msg.id }, combiningContext(m))(m),
+  DragEnd: (m) => CombiningBinding.dragEnd(combiningContext(m))(m),
+  DragOver: (m, msg) =>
+    CombiningBinding.dragOver({ id: msg.id }, combiningContext(m))(m),
+  Drop: (m, msg) =>
+    CombiningBinding.drop({ id: msg.id }, combiningContext(m))(m),
 
-      Entered: (msg) => acceptRoom(msg)(m),
-      Board: (msg) => receiveBoard(msg.board)(m),
-      Private: (msg) => {
-        return {
-          model: {
-            ...m,
-            private: msg.state ?? { notes: [], votes: [], sessions: [] },
-          } satisfies Model,
-        };
-      },
+  NeedsJoin: (m) => {
+    return { model: m };
+  },
 
-      WatchFailed: (msg) => {
-        return {
-          model: { ...m, connected: false, error: msg.reason } satisfies Model,
-          commands: m.roomId
-            ? [Resume({ roomId: m.roomId, invitation: true })]
-            : [],
-        };
-      },
+  Entered: (m, msg) => acceptRoom(msg)(m),
+  Board: (m, msg) => receiveBoard(msg.board)(m),
+  Private: (m, msg) => {
+    return {
+      model: {
+        ...m,
+        private: msg.state ?? { notes: [], votes: [], sessions: [] },
+      } satisfies Model,
+    };
+  },
 
-      Invite: () =>
+  WatchFailed: (m, msg) => {
+    return {
+      model: { ...m, connected: false, error: msg.reason } satisfies Model,
+      commands: m.roomId
+        ? [Resume({ roomId: m.roomId, invitation: true })]
+        : [],
+    };
+  },
+
+  Invite: (m) =>
+    Update.combineSteps([
+      () =>
         Update.combineSteps([
-          () =>
-            Update.combineSteps([
-              () => ({
-                model: {
-                  ...m,
-                  invite: !m.invite,
-                  mobileMenu: false,
-                  toolsOpen: false,
-                  roomSection: "people",
-                } satisfies Model,
-              }),
-              NoticeBinding.informNotice({ text: "" }),
-            ])(m),
-          ...(!m.invite
-            ? [InvitationsBinding.requestLoad(invitationContext(m))]
-            : []),
+          () => ({
+            model: {
+              ...m,
+              invite: !m.invite,
+              mobileMenu: false,
+              toolsOpen: false,
+              roomSection: "people",
+            } satisfies Model,
+          }),
+          NoticeBinding.informNotice({ text: "" }),
         ])(m),
+      ...(!m.invite
+        ? [InvitationsBinding.requestLoad(invitationContext(m))]
+        : []),
+    ])(m),
 
-      Notify: (msg) => NoticeBinding.informNotice({ text: msg.text })(m),
-      Retry: () => {
-        return {
-          model: {
-            ...m,
-            reconnect: m.reconnect + 1,
-            error: "",
-            connected: false,
-          } satisfies Model,
-        };
-      },
-    }),
-  );
+  Notify: (m, msg) => NoticeBinding.informNotice({ text: msg.text })(m),
+  Retry: (m) => {
+    return {
+      model: {
+        ...m,
+        reconnect: m.reconnect + 1,
+        error: "",
+        connected: false,
+      } satisfies Model,
+    };
+  },
 });

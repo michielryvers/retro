@@ -224,149 +224,147 @@ const save = (m: typeof Model.Type, c: NotesContext, id: string) =>
 
 const init = NotesComposition.makeInit(() => ({ model: blank }));
 
-const update = NotesComposition.makeUpdate((m, msg, c: NotesContext) =>
-  Message.match(msg, {
-    Changed: ({ value }) => {
-      if (m.busy || c.busy || !editable(c)) return { model: m };
+const update = NotesComposition.makeUpdate.withContext((c: NotesContext) => ({
+  Changed: (m, { value }) => {
+    if (m.busy || c.busy || !editable(c)) return { model: m };
 
-      const model = {
-        ...m,
-        draft: value,
-        revision: m.revision + 1,
-        drafts: m.editId
-          ? m.drafts
-          : { ...m.drafts, [m.editor ?? c.column]: value },
-      };
+    const model = {
+      ...m,
+      draft: value,
+      revision: m.revision + 1,
+      drafts: m.editId
+        ? m.drafts
+        : { ...m.drafts, [m.editor ?? c.column]: value },
+    };
 
-      return { model, commands: [persist(model, c)] };
-    },
-    Edit: ({ column, id, text }) => {
-      if (m.busy || c.busy || !editable(c)) return { model: m };
+    return { model, commands: [persist(model, c)] };
+  },
+  Edit: (m, { column, id, text }) => {
+    if (m.busy || c.busy || !editable(c)) return { model: m };
 
-      if (m.editId && m.editId !== id)
-        return {
-          model: m,
-          outMessage: OutMessage.Notified({
-            text: "Save or cancel your edit before opening another note.",
-          }),
-        };
-
+    if (m.editId && m.editId !== id)
       return {
-        model: { ...m, editor: column, editId: id, draft: text },
-        outMessage: OutMessage.Editing({ column }),
-      };
-    },
-    Cancel: () => {
-      if (m.busy) return { model: m };
-      const column = m.editor ?? c.column;
-      const drafts = m.editId ? m.drafts : { ...m.drafts, [column]: "" };
-
-      const model = {
-        ...m,
-        editor: null,
-        editId: "",
-        draft: drafts[column] ?? "",
-        drafts,
-        draftIds: m.editId ? m.draftIds : { ...m.draftIds, [column]: "" },
-        revision: m.revision + 1,
+        model: m,
+        outMessage: OutMessage.Notified({
+          text: "Save or cancel your edit before opening another note.",
+        }),
       };
 
-      return { model, commands: [persist(model, c)] };
-    },
-    Save: () => {
-      if (m.busy || c.busy || !editable(c) || !m.draft.trim())
-        return { model: m };
-      const id = m.editId || m.draftIds[m.editor ?? c.column];
+    return {
+      model: { ...m, editor: column, editId: id, draft: text },
+      outMessage: OutMessage.Editing({ column }),
+    };
+  },
+  Cancel: (m) => {
+    if (m.busy) return { model: m };
+    const column = m.editor ?? c.column;
+    const drafts = m.editId ? m.drafts : { ...m.drafts, [column]: "" };
 
-      return {
-        model: { ...m, busy: true },
-        commands: id ? [save(m, c, id)] : [Prepare()],
-      };
-    },
-    Prepared: ({ id }) => {
-      if (!m.busy || !editable(c)) return { model: { ...m, busy: false } };
+    const model = {
+      ...m,
+      editor: null,
+      editId: "",
+      draft: drafts[column] ?? "",
+      drafts,
+      draftIds: m.editId ? m.draftIds : { ...m.draftIds, [column]: "" },
+      revision: m.revision + 1,
+    };
 
-      const model = {
-        ...m,
-        draftIds: { ...m.draftIds, [m.editor ?? c.column]: id },
-      };
+    return { model, commands: [persist(model, c)] };
+  },
+  Save: (m) => {
+    if (m.busy || c.busy || !editable(c) || !m.draft.trim())
+      return { model: m };
+    const id = m.editId || m.draftIds[m.editor ?? c.column];
 
-      return { model, commands: [persist(model, c), save(model, c, id)] };
-    },
-    Delete: () =>
-      !m.editId || m.busy || c.busy || !editable(c)
-        ? { model: m }
-        : {
-            model: { ...m, busy: true },
-            commands: [DeleteNote({ roomId: c.roomId, id: m.editId })],
-          },
-    Saved: () => {
-      const column = m.editor ?? c.column;
-      const drafts = m.editId ? m.drafts : { ...m.drafts, [column]: "" };
+    return {
+      model: { ...m, busy: true },
+      commands: id ? [save(m, c, id)] : [Prepare()],
+    };
+  },
+  Prepared: (m, { id }) => {
+    if (!m.busy || !editable(c)) return { model: { ...m, busy: false } };
 
-      const model = {
-        ...m,
-        busy: false,
-        editor: null,
-        editId: "",
-        drafts,
-        draftIds: m.editId ? m.draftIds : { ...m.draftIds, [column]: "" },
-        draft: drafts[column] ?? "",
-        revision: m.revision + 1,
-      };
+    const model = {
+      ...m,
+      draftIds: { ...m.draftIds, [m.editor ?? c.column]: id },
+    };
 
-      return {
-        model,
-        commands: [persist(model, c)],
-        outMessage: OutMessage.Saved(),
-      };
-    },
-    Failed: ({ reason }) => ({
-      model: { ...m, busy: false },
-      outMessage: OutMessage.Failed({ reason }),
-    }),
-    Loaded: (a) =>
-      a.revision !== m.revision
-        ? { model: m }
-        : {
-            model: {
-              ...m,
-              drafts: a.drafts,
-              draftIds: a.draftIds,
-              draft: a.drafts[c.column] ?? "",
-            },
-          },
-    Persisted: () => ({ model: m }),
-    BackupFailed: () => ({
-      model: m,
-      outMessage: OutMessage.Notified({
-        text: "Draft backup unavailable. Keep this tab open until you save.",
-      }),
-    }),
-    InformedOfColumn: ({ column }) => ({
-      model: {
-        ...m,
-        draft: m.drafts[column] ?? "",
-        editor: m.editor ? column : null,
-      },
-    }),
-    InformedOfRoom: ({ load }) =>
-      c.board?.phase === "closed" || !c.board
-        ? { model: blank, commands: [persist(blank, c)] }
-        : load && c.board.phase === "write"
-          ? {
-              model: m,
-              commands: [
-                Load({
-                  roomId: c.roomId,
-                  actorId: c.actorId,
-                  revision: m.revision,
-                }),
-              ],
-            }
-          : { model: m },
+    return { model, commands: [persist(model, c), save(model, c, id)] };
+  },
+  Delete: (m) =>
+    !m.editId || m.busy || c.busy || !editable(c)
+      ? { model: m }
+      : {
+          model: { ...m, busy: true },
+          commands: [DeleteNote({ roomId: c.roomId, id: m.editId })],
+        },
+  Saved: (m) => {
+    const column = m.editor ?? c.column;
+    const drafts = m.editId ? m.drafts : { ...m.drafts, [column]: "" };
+
+    const model = {
+      ...m,
+      busy: false,
+      editor: null,
+      editId: "",
+      drafts,
+      draftIds: m.editId ? m.draftIds : { ...m.draftIds, [column]: "" },
+      draft: drafts[column] ?? "",
+      revision: m.revision + 1,
+    };
+
+    return {
+      model,
+      commands: [persist(model, c)],
+      outMessage: OutMessage.Saved(),
+    };
+  },
+  Failed: (m, { reason }) => ({
+    model: { ...m, busy: false },
+    outMessage: OutMessage.Failed({ reason }),
   }),
-);
+  Loaded: (m, a) =>
+    a.revision !== m.revision
+      ? { model: m }
+      : {
+          model: {
+            ...m,
+            drafts: a.drafts,
+            draftIds: a.draftIds,
+            draft: a.drafts[c.column] ?? "",
+          },
+        },
+  Persisted: (m) => ({ model: m }),
+  BackupFailed: (m) => ({
+    model: m,
+    outMessage: OutMessage.Notified({
+      text: "Draft backup unavailable. Keep this tab open until you save.",
+    }),
+  }),
+  InformedOfColumn: (m, { column }) => ({
+    model: {
+      ...m,
+      draft: m.drafts[column] ?? "",
+      editor: m.editor ? column : null,
+    },
+  }),
+  InformedOfRoom: (m, { load }) =>
+    c.board?.phase === "closed" || !c.board
+      ? { model: blank, commands: [persist(blank, c)] }
+      : load && c.board.phase === "write"
+        ? {
+            model: m,
+            commands: [
+              Load({
+                roomId: c.roomId,
+                actorId: c.actorId,
+                revision: m.revision,
+              }),
+            ],
+          }
+        : { model: m },
+}));
 
 const view = NotesComposition.makeView.withInputs<
   NotesContext & {

@@ -53,86 +53,84 @@ const init = NavigationComposition.makeInit(() => ({
   },
 }));
 
-const update = NavigationComposition.makeUpdate(
-  (m, msg, c: NavigationContext) =>
-    Message.match(msg, {
-      MobileColumn: ({ column }) => {
-        if (
-          c.busy ||
-          column === m.mobileColumn ||
-          !columnsFor(c.board?.template).some((x) => x.id === column)
-        )
-          return { model: m };
+const update = NavigationComposition.makeUpdate.withContext(
+  (c: NavigationContext) => ({
+    MobileColumn: (m, { column }) => {
+      if (
+        c.busy ||
+        column === m.mobileColumn ||
+        !columnsFor(c.board?.template).some((x) => x.id === column)
+      )
+        return { model: m };
 
-        if (c.editingAction)
-          return {
-            model: m,
-            outMessage: OutMessage.Notified({
-              text: "Save or cancel this action before switching categories.",
-            }),
-          };
-
-        if (c.editingNote && c.editingNote !== column)
-          return {
-            model: m,
-            outMessage: OutMessage.Notified({
-              text: "Save or cancel your edit before switching categories.",
-            }),
-          };
-        const columns = columnsFor(c.board?.template);
-
+      if (c.editingAction)
         return {
-          model: {
-            ...m,
-            mobileColumn: column,
-            categoryDirection:
-              columns.findIndex((x) => x.id === column) >
-              columns.findIndex((x) => x.id === m.mobileColumn)
-                ? ("next" as const)
-                : ("previous" as const),
-          },
-          outMessage: OutMessage.Selected({ column }),
+          model: m,
+          outMessage: OutMessage.Notified({
+            text: "Save or cancel this action before switching categories.",
+          }),
         };
-      },
-      ToggleActions: () => {
-        if (
-          c.editingAction ||
-          !c.board ||
-          !["actions", "closed"].includes(c.board.phase)
-        )
-          return { model: m };
 
-        const first = c.board.notes.find((n) =>
-          c.board?.actions.some((a) => a.noteId === n.id),
-        );
-
+      if (c.editingNote && c.editingNote !== column)
         return {
-          model: {
-            ...m,
-            actionsOnly: !m.actionsOnly,
-            mobileColumn:
-              !m.actionsOnly && first ? first.column : m.mobileColumn,
-          },
+          model: m,
+          outMessage: OutMessage.Notified({
+            text: "Save or cancel your edit before switching categories.",
+          }),
         };
-      },
-      VoteSort: ({ order }) => ({ model: { ...m, voteSort: order } }),
-      InformedOfRoom: () => ({
+      const columns = columnsFor(c.board?.template);
+
+      return {
         model: {
           ...m,
-          mobileColumn: columnsFor(c.board?.template).some(
-            (x) => x.id === m.mobileColumn,
-          )
-            ? m.mobileColumn
-            : columnsFor(c.board?.template)[0]!.id,
-          voteSort:
-            c.board?.phase === "actions" && m.phase !== "actions"
-              ? "highest"
-              : m.voteSort,
-          phase: c.board?.phase ?? "",
+          mobileColumn: column,
+          categoryDirection:
+            columns.findIndex((x) => x.id === column) >
+            columns.findIndex((x) => x.id === m.mobileColumn)
+              ? ("next" as const)
+              : ("previous" as const),
         },
-      }),
-      FocusColumn: ({ column }) => ({ model: { ...m, mobileColumn: column } }),
+        outMessage: OutMessage.Selected({ column }),
+      };
+    },
+    ToggleActions: (m) => {
+      if (
+        c.editingAction ||
+        !c.board ||
+        !["actions", "closed"].includes(c.board.phase)
+      )
+        return { model: m };
+
+      const first = c.board.notes.find((n) =>
+        c.board?.actions.some((a) => a.noteId === n.id),
+      );
+
+      return {
+        model: {
+          ...m,
+          actionsOnly: !m.actionsOnly,
+          mobileColumn: !m.actionsOnly && first ? first.column : m.mobileColumn,
+        },
+      };
+    },
+    VoteSort: (m, { order }) => ({ model: { ...m, voteSort: order } }),
+    InformedOfRoom: (m) => ({
+      model: {
+        ...m,
+        mobileColumn: columnsFor(c.board?.template).some(
+          (x) => x.id === m.mobileColumn,
+        )
+          ? m.mobileColumn
+          : columnsFor(c.board?.template)[0]!.id,
+        voteSort:
+          c.board?.phase === "actions" && m.phase !== "actions"
+            ? "highest"
+            : m.voteSort,
+        phase: c.board?.phase ?? "",
+      },
     }),
+    FocusColumn: (m, { column }) => ({ model: { ...m, mobileColumn: column } }),
+  }),
 );
 
 const view = NavigationComposition.makeView.withInputs<

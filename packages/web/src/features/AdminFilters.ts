@@ -23,12 +23,10 @@ const init = AdminFiltersComposition.makeInit(() => ({
   model: { search: "", filter: "" },
 }));
 
-const update = AdminFiltersComposition.makeUpdate((m, msg) =>
-  Message.match(msg, {
-    Search: ({ value }) => ({ model: { ...m, search: value } }),
-    Filter: ({ value }) => ({ model: { ...m, filter: value } }),
-  }),
-);
+const update = AdminFiltersComposition.makeUpdate({
+  Search: (m, { value }) => ({ model: { ...m, search: value } }),
+  Filter: (m, { value }) => ({ model: { ...m, filter: value } }),
+});
 
 const view = AdminFiltersComposition.makeView.withInputs<{
   readonly disabled: boolean;

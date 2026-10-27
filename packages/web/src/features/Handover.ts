@@ -69,33 +69,32 @@ const init = HandoverComposition.makeInit(() => ({
   model: { selected: "", busy: false },
 }));
 
-const update = HandoverComposition.makeUpdate(
-  (m, msg, context: HandoverContext) =>
-    Message.match(msg, {
-      Selected: ({ value }) => ({
-        model: m.busy ? m : { ...m, selected: value },
-      }),
-      Requested: () =>
-        !context.allowed || context.busy || m.busy || !m.selected
-          ? { model: m }
-          : {
-              model: { ...m, busy: true },
-              commands: [
-                HandOver({ roomId: context.roomId, participantId: m.selected }),
-              ],
-            },
-      Completed: ({ board }) => ({
-        model: { ...m, busy: false, selected: "" },
-        outMessage: OutMessage.Updated({
-          board,
-          notice: "Facilitation handed over.",
-        }),
-      }),
-      Failed: ({ reason }) => ({
-        model: { ...m, busy: false },
-        outMessage: OutMessage.Failed({ reason }),
+const update = HandoverComposition.makeUpdate.withContext(
+  (context: HandoverContext) => ({
+    Selected: (m, { value }) => ({
+      model: m.busy ? m : { ...m, selected: value },
+    }),
+    Requested: (m) =>
+      !context.allowed || context.busy || m.busy || !m.selected
+        ? { model: m }
+        : {
+            model: { ...m, busy: true },
+            commands: [
+              HandOver({ roomId: context.roomId, participantId: m.selected }),
+            ],
+          },
+    Completed: (m, { board }) => ({
+      model: { ...m, busy: false, selected: "" },
+      outMessage: OutMessage.Updated({
+        board,
+        notice: "Facilitation handed over.",
       }),
     }),
+    Failed: (m, { reason }) => ({
+      model: { ...m, busy: false },
+      outMessage: OutMessage.Failed({ reason }),
+    }),
+  }),
 );
 
 const view = HandoverComposition.makeView.withInputs<{

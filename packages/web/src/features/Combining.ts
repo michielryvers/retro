@@ -118,9 +118,9 @@ const Split = CombiningDefinition.makeCommand("Split", {
 
 const init = CombiningComposition.makeInit(() => ({ model: blank }));
 
-const update = CombiningComposition.makeUpdate((m, msg, c: CombiningContext) =>
-  Message.match(msg, {
-    DragStart: ({ id }) => ({
+const update = CombiningComposition.makeUpdate.withContext(
+  (c: CombiningContext) => ({
+    DragStart: (m, { id }) => ({
       model:
         allowed(c) &&
         !m.busy &&
@@ -129,14 +129,14 @@ const update = CombiningComposition.makeUpdate((m, msg, c: CombiningContext) =>
           ? { ...m, dragSource: id, dropTarget: "" }
           : m,
     }),
-    DragEnd: () => ({ model: { ...m, dragSource: "", dropTarget: "" } }),
-    DragOver: ({ id }) => ({
+    DragEnd: (m) => ({ model: { ...m, dragSource: "", dropTarget: "" } }),
+    DragOver: (m, { id }) => ({
       model: {
         ...m,
         dropTarget: m.dragSource && m.dragSource !== id ? id : "",
       },
     }),
-    Drop: ({ id }) =>
+    Drop: (m, { id }) =>
       !allowed(c) ||
       m.busy ||
       c.busy ||
@@ -154,14 +154,14 @@ const update = CombiningComposition.makeUpdate((m, msg, c: CombiningContext) =>
               }),
             ],
           },
-    Split: ({ id }) =>
+    Split: (m, { id }) =>
       !allowed(c) || m.busy || c.busy
         ? { model: m }
         : {
             model: { ...blank, busy: true },
             commands: [Split({ roomId: c.roomId, id })],
           },
-    Combined: ({ board, noteId }) => ({
+    Combined: (m, { board, noteId }) => ({
       model: blank,
       outMessage: OutMessage.Updated({
         board,
@@ -169,7 +169,7 @@ const update = CombiningComposition.makeUpdate((m, msg, c: CombiningContext) =>
         notice: "Notes combined.",
       }),
     }),
-    Separated: ({ board }) => ({
+    Separated: (m, { board }) => ({
       model: blank,
       outMessage: OutMessage.Updated({
         board,
@@ -177,11 +177,11 @@ const update = CombiningComposition.makeUpdate((m, msg, c: CombiningContext) =>
         notice: "Notes separated.",
       }),
     }),
-    Failed: ({ reason }) => ({
+    Failed: (m, { reason }) => ({
       model: { ...blank, busy: false },
       outMessage: OutMessage.Failed({ reason }),
     }),
-    InformedOfRoom: () => ({
+    InformedOfRoom: (m) => ({
       model:
         allowed(c) && c.board?.notes.some((n) => n.id === m.dragSource)
           ? m

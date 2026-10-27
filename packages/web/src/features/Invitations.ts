@@ -126,54 +126,53 @@ const init = InvitationsComposition.makeInit(() => ({
   model: { name: "", links: [], loading: false, busy: false, error: "" },
 }));
 
-const update = InvitationsComposition.makeUpdate(
-  (m, msg, context: InvitationContext) =>
-    Message.match(msg, {
-      ChangedName: ({ value }) => ({
-        model: m.busy ? m : { ...m, name: value },
-      }),
-      Load: () =>
-        context.allowed
-          ? {
-              model: { ...m, loading: true, error: "" },
-              commands: [LoadInvitations({ roomId: context.roomId, name: "" })],
-            }
-          : { model: m },
-      Add: () =>
-        !context.allowed || context.closed || m.busy || !m.name.trim()
-          ? { model: m }
-          : {
-              model: { ...m, busy: true, error: "" },
-              commands: [
-                LoadInvitations({
-                  roomId: context.roomId,
-                  name: m.name.trim(),
-                }),
-              ],
-            },
-      Loaded: ({ links }) => ({
-        model: {
-          ...m,
-          links,
-          name: "",
-          loading: false,
-          busy: false,
-          error: "",
-        },
-      }),
-      Failed: ({ reason }) => ({
-        model: { ...m, loading: false, busy: false, error: reason },
-      }),
-      Copy: ({ url }) => ({ model: m, commands: [Copy({ url })] }),
-      Copied: ({ text }) => ({
-        model: m,
-        outMessage: OutMessage.Notified({ text }),
-      }),
-      Close: () => ({ model: m, outMessage: OutMessage.Closed() }),
-      InformedOfLinks: ({ links, error }) => ({
-        model: { ...m, links, error, loading: false, busy: false },
-      }),
+const update = InvitationsComposition.makeUpdate.withContext(
+  (context: InvitationContext) => ({
+    ChangedName: (m, { value }) => ({
+      model: m.busy ? m : { ...m, name: value },
     }),
+    Load: (m) =>
+      context.allowed
+        ? {
+            model: { ...m, loading: true, error: "" },
+            commands: [LoadInvitations({ roomId: context.roomId, name: "" })],
+          }
+        : { model: m },
+    Add: (m) =>
+      !context.allowed || context.closed || m.busy || !m.name.trim()
+        ? { model: m }
+        : {
+            model: { ...m, busy: true, error: "" },
+            commands: [
+              LoadInvitations({
+                roomId: context.roomId,
+                name: m.name.trim(),
+              }),
+            ],
+          },
+    Loaded: (m, { links }) => ({
+      model: {
+        ...m,
+        links,
+        name: "",
+        loading: false,
+        busy: false,
+        error: "",
+      },
+    }),
+    Failed: (m, { reason }) => ({
+      model: { ...m, loading: false, busy: false, error: reason },
+    }),
+    Copy: (m, { url }) => ({ model: m, commands: [Copy({ url })] }),
+    Copied: (m, { text }) => ({
+      model: m,
+      outMessage: OutMessage.Notified({ text }),
+    }),
+    Close: (m) => ({ model: m, outMessage: OutMessage.Closed() }),
+    InformedOfLinks: (m, { links, error }) => ({
+      model: { ...m, links, error, loading: false, busy: false },
+    }),
+  }),
 );
 
 const view = InvitationsComposition.makeView.withInputs<{

@@ -77,10 +77,10 @@ const init = TimerComposition.makeInit(() => ({
   model: { now: 0, busy: false },
 }));
 
-const update = TimerComposition.makeUpdate((m, msg, context: TimerContext) =>
-  Message.match(msg, {
-    Tick: ({ now }) => ({ model: { ...m, now } }),
-    Requested: ({ operation, seconds }) =>
+const update = TimerComposition.makeUpdate.withContext(
+  (context: TimerContext) => ({
+    Tick: (m, { now }) => ({ model: { ...m, now } }),
+    Requested: (m, { operation, seconds }) =>
       !context.allowed || context.busy || m.busy
         ? { model: m }
         : {
@@ -89,11 +89,11 @@ const update = TimerComposition.makeUpdate((m, msg, context: TimerContext) =>
               SetTimer({ roomId: context.roomId, operation, seconds }),
             ],
           },
-    Completed: ({ board }) => ({
+    Completed: (m, { board }) => ({
       model: { ...m, busy: false },
       outMessage: OutMessage.Updated({ board, notice: "" }),
     }),
-    Failed: ({ reason }) => ({
+    Failed: (m, { reason }) => ({
       model: { ...m, busy: false },
       outMessage: OutMessage.Failed({ reason }),
     }),

@@ -89,97 +89,95 @@ const init = AdminDeletionComposition.makeInit(() => ({
   },
 }));
 
-const update = AdminDeletionComposition.makeUpdate(
-  (m, msg, c: DeletionContext) =>
-    Message.match(msg, {
-      Select: (msg) => {
-        if (m.deleting || c.loading) return { model: m };
+const update = AdminDeletionComposition.makeUpdate.withContext(
+  (c: DeletionContext) => ({
+    Select: (m, msg) => {
+      if (m.deleting || c.loading) return { model: m };
+
+      return {
+        model: {
+          ...m,
+          selected: msg.id,
+          pending: [],
+          bulkTotal: 0,
+          confirmation: "",
+          error: "",
+          notice: "",
+        },
+      };
+    },
+    Confirm: (m, msg) => {
+      return { model: { ...m, confirmation: msg.value } };
+    },
+    Delete: (m) => {
+      const room = c.rooms.find((r) => r.id === m.selected);
+
+      if (!room || m.deleting || m.confirmation !== room.title)
+        return { model: m };
+
+      return {
+        model: { ...m, deleting: true, error: "" },
+        commands: [Delete({ id: room.id, title: room.title })],
+      };
+    },
+    DeleteAll: (m) => {
+      const room = c.rooms[0];
+
+      if (
+        !room ||
+        c.loading ||
+        m.deleting ||
+        m.selected !== "__all__" ||
+        m.confirmation !== "DELETE ALL"
+      )
+        return { model: m };
+
+      return {
+        model: {
+          ...m,
+          deleting: true,
+          pending: c.rooms,
+          bulkTotal: c.rooms.length,
+          error: "",
+          notice: "",
+        },
+        commands: [Delete({ id: room.id, title: room.title })],
+      };
+    },
+    Deleted: (m, msg) => {
+      if (m.selected === "__all__") {
+        const pending = m.pending.filter((room) => room.id !== msg.id);
+        const next = pending[0];
 
         return {
           model: {
             ...m,
-            selected: msg.id,
-            pending: [],
-            bulkTotal: 0,
-            confirmation: "",
-            error: "",
-            notice: "",
+            pending,
+            deleting: Boolean(next),
+            selected: next ? "__all__" : "",
+            confirmation: next ? m.confirmation : "",
+            notice: next
+              ? `Deleted ${m.bulkTotal - pending.length} of ${m.bulkTotal} rooms.`
+              : `Permanently deleted ${m.bulkTotal} ${m.bulkTotal === 1 ? "room" : "rooms"}.`,
           },
+          outMessage: OutMessage.Deleted({ id: msg.id, refresh: !next }),
+          commands: next ? [Delete({ id: next.id, title: next.title })] : [],
         };
-      },
-      Confirm: (msg) => {
-        return { model: { ...m, confirmation: msg.value } };
-      },
-      Delete: () => {
-        const room = c.rooms.find((r) => r.id === m.selected);
+      }
 
-        if (!room || m.deleting || m.confirmation !== room.title)
-          return { model: m };
-
-        return {
-          model: { ...m, deleting: true, error: "" },
-          commands: [Delete({ id: room.id, title: room.title })],
-        };
-      },
-      DeleteAll: () => {
-        const room = c.rooms[0];
-
-        if (
-          !room ||
-          c.loading ||
-          m.deleting ||
-          m.selected !== "__all__" ||
-          m.confirmation !== "DELETE ALL"
-        )
-          return { model: m };
-
-        return {
-          model: {
-            ...m,
-            deleting: true,
-            pending: c.rooms,
-            bulkTotal: c.rooms.length,
-            error: "",
-            notice: "",
-          },
-          commands: [Delete({ id: room.id, title: room.title })],
-        };
-      },
-      Deleted: (msg) => {
-        if (m.selected === "__all__") {
-          const pending = m.pending.filter((room) => room.id !== msg.id);
-          const next = pending[0];
-
-          return {
-            model: {
-              ...m,
-              pending,
-              deleting: Boolean(next),
-              selected: next ? "__all__" : "",
-              confirmation: next ? m.confirmation : "",
-              notice: next
-                ? `Deleted ${m.bulkTotal - pending.length} of ${m.bulkTotal} rooms.`
-                : `Permanently deleted ${m.bulkTotal} ${m.bulkTotal === 1 ? "room" : "rooms"}.`,
-            },
-            outMessage: OutMessage.Deleted({ id: msg.id, refresh: !next }),
-            commands: next ? [Delete({ id: next.id, title: next.title })] : [],
-          };
-        }
-
-        return {
-          outMessage: OutMessage.Deleted({ id: msg.id, refresh: false }),
-          model: {
-            ...m,
-            deleting: false,
-            selected: "",
-            confirmation: "",
-            notice:
-              "Room permanently deleted. Its invite link no longer works.",
-          },
-        };
-      },
-      Failed: ({ error }) => ({ model: { ...m, deleting: false, error } }),
-    }),
+      return {
+        outMessage: OutMessage.Deleted({ id: msg.id, refresh: false }),
+        model: {
+          ...m,
+          deleting: false,
+          selected: "",
+          confirmation: "",
+          notice: "Room permanently deleted. Its invite link no longer works.",
+        },
+      };
+    },
+    Failed: (m, { error }) => ({ model: { ...m, deleting: false, error } }),
+  }),
 );
 
 const view = AdminDeletionComposition.makeView.withInputs<

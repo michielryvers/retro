@@ -17,8 +17,10 @@ const init = TemplatePickerComposition.makeInit(() => ({
   model: { selected: "mad-sad-glad" },
 }));
 
-const update = TemplatePickerComposition.makeUpdate(
-  (m, msg, busy: boolean) => ({ model: busy ? m : { selected: msg.template } }),
+const update = TemplatePickerComposition.makeUpdate.withContext(
+  (busy: boolean) => ({
+    Selected: (m, msg) => ({ model: busy ? m : { selected: msg.template } }),
+  }),
 );
 
 const view = TemplatePickerComposition.makeView.withInputs<{

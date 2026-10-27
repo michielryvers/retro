@@ -20,10 +20,10 @@ const PasswordInputComposition = PasswordInputDefinition.makeComposition();
 const blank = { value: "", visible: false };
 const init = PasswordInputComposition.makeInit(() => ({ model: blank }));
 
-const update = PasswordInputComposition.makeUpdate((m, msg, busy: boolean) =>
-  Message.match(msg, {
-    Changed: ({ value }) => ({ model: busy ? m : { ...m, value } }),
-    Toggle: () => ({ model: busy ? m : { ...m, visible: !m.visible } }),
+const update = PasswordInputComposition.makeUpdate.withContext(
+  (busy: boolean) => ({
+    Changed: (m, { value }) => ({ model: busy ? m : { ...m, value } }),
+    Toggle: (m) => ({ model: busy ? m : { ...m, visible: !m.visible } }),
     Cleared: () => ({ model: blank }),
   }),
 );

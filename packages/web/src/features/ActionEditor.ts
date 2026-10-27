@@ -175,12 +175,12 @@ const save = (m: typeof Model.Type, c: ActionContext, id: string) =>
     dueDate: m.due,
   });
 
-const update = ActionEditorComposition.makeUpdate((m, msg, c: ActionContext) =>
-  Message.match(msg, {
-    Field: ({ field, value }) => ({
+const update = ActionEditorComposition.makeUpdate.withContext(
+  (c: ActionContext) => ({
+    Field: (m, { field, value }) => ({
       model: m.busy ? m : { ...m, [field]: value },
     }),
-    Add: ({ id }) => {
+    Add: (m, { id }) => {
       if (!allowed(c) || c.busy || m.busy) return { model: m };
 
       if (m.selected && m.selected !== id && m.action.trim())
@@ -193,7 +193,7 @@ const update = ActionEditorComposition.makeUpdate((m, msg, c: ActionContext) =>
 
       return { model: { ...blank, selected: id }, commands: [FocusAction()] };
     },
-    Edit: ({ id }) => {
+    Edit: (m, { id }) => {
       if (!allowed(c) || c.busy || m.busy) return { model: m };
       const a = c.board?.actions.find((a) => a.id === id);
 
@@ -219,8 +219,8 @@ const update = ActionEditorComposition.makeUpdate((m, msg, c: ActionContext) =>
         commands: [FocusAction()],
       };
     },
-    Cancel: () => ({ model: m.busy ? m : blank }),
-    Save: () =>
+    Cancel: (m) => ({ model: m.busy ? m : blank }),
+    Save: (m) =>
       !allowed(c) || c.busy || m.busy || !m.selected || !m.action.trim()
         ? { model: m }
         : {
@@ -230,33 +230,33 @@ const update = ActionEditorComposition.makeUpdate((m, msg, c: ActionContext) =>
                 ? [save(m, c, m.actionId || m.actionDraftId)]
                 : [Prepare()],
           },
-    Prepared: ({ id }) =>
+    Prepared: (m, { id }) =>
       !allowed(c) || !m.busy
         ? { model: blank }
         : { model: { ...m, actionDraftId: id }, commands: [save(m, c, id)] },
-    Delete: ({ id }) =>
+    Delete: (m, { id }) =>
       !allowed(c) || c.busy || m.busy
         ? { model: m }
         : {
             model: { ...m, busy: true },
             commands: [DeleteAction({ roomId: c.roomId, id })],
           },
-    Saved: () => ({
+    Saved: (m) => ({
       model: blank,
       outMessage: OutMessage.Notified({
         text: m.actionId ? "Action updated." : "Action added.",
       }),
     }),
-    Deleted: () => ({
+    Deleted: (m) => ({
       model: { ...m, busy: false },
       outMessage: OutMessage.Notified({ text: "Action deleted." }),
     }),
-    Failed: ({ reason }) => ({
+    Failed: (m, { reason }) => ({
       model: { ...m, busy: false },
       outMessage: OutMessage.Failed({ reason }),
     }),
-    Focused: () => ({ model: m }),
-    InformedOfRoomChange: () => ({ model: allowed(c) ? m : blank }),
+    Focused: (m) => ({ model: m }),
+    InformedOfRoomChange: (m) => ({ model: allowed(c) ? m : blank }),
   }),
 );
 

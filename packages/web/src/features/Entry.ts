@@ -250,51 +250,49 @@ const init = EntryComposition.makeInit((flags: typeof Flags.Type) => ({
       : [],
 }));
 
-const update = EntryComposition.makeUpdate((m, msg) =>
-  Message.match(msg, {
-    Field: ({ field, value }) => ({
-      model: m.busy ? m : { ...m, [field]: value },
-    }),
-    Enter: () =>
-      m.busy
-        ? { model: m }
-        : {
-            model: { ...m, busy: true, error: "" },
-            commands: [
-              Enter({
-                roomId: m.roomId,
-                title: m.title,
-                name: m.name,
-                template: m.templatePicker.selected,
-                password: m.password.value,
-                participantId: m.participantId,
-                token: m.inviteToken,
-              }),
-            ],
-          },
-    PreviewLoaded: ({ preview }) => ({
-      model: { ...m, invitationPreview: preview },
-    }),
-    Entered: ({ roomId, board, links }) =>
-      Update.withOutMessage(
-        Update.combineSteps([
-          EntryDefinition.makeFieldsStep(() => ({
-            busy: () => false,
-            inviteToken: () => "",
-          })),
-          PasswordBinding.clear(false),
-        ])(m),
-        links
-          ? OutMessage.Entered({ roomId, board, links })
-          : OutMessage.Entered({ roomId, board }),
-      ),
-    Failed: ({ reason }) => ({ model: { ...m, busy: false, error: reason } }),
-    RoomUnavailable: () => ({
-      model: { ...m, busy: false },
-      outMessage: OutMessage.Unavailable(),
-    }),
+const update = EntryComposition.makeUpdate({
+  Field: (m, { field, value }) => ({
+    model: m.busy ? m : { ...m, [field]: value },
   }),
-);
+  Enter: (m) =>
+    m.busy
+      ? { model: m }
+      : {
+          model: { ...m, busy: true, error: "" },
+          commands: [
+            Enter({
+              roomId: m.roomId,
+              title: m.title,
+              name: m.name,
+              template: m.templatePicker.selected,
+              password: m.password.value,
+              participantId: m.participantId,
+              token: m.inviteToken,
+            }),
+          ],
+        },
+  PreviewLoaded: (m, { preview }) => ({
+    model: { ...m, invitationPreview: preview },
+  }),
+  Entered: (m, { roomId, board, links }) =>
+    Update.withOutMessage(
+      Update.combineSteps([
+        EntryDefinition.makeFieldsStep(() => ({
+          busy: () => false,
+          inviteToken: () => "",
+        })),
+        PasswordBinding.clear(false),
+      ])(m),
+      links
+        ? OutMessage.Entered({ roomId, board, links })
+        : OutMessage.Entered({ roomId, board }),
+    ),
+  Failed: (m, { reason }) => ({ model: { ...m, busy: false, error: reason } }),
+  RoomUnavailable: (m) => ({
+    model: { ...m, busy: false },
+    outMessage: OutMessage.Unavailable(),
+  }),
+});
 
 type Message = typeof Message.Type;
 
