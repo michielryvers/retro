@@ -89,9 +89,9 @@ The `CommonGround` infrastructure identifiers preserve the original deployment. 
 - `packages/web/src/AdminApp.ts`: the separate administration Block.
 - `scripts`: integration checks against a running local app.
 
-This branch tracks the [Foldkit Blocks integration](https://github.com/foldkit/foldkit/pull/1655), pinned to verified preview `f3be22cfeefed437164ad614d08b16d9000e0703`. Update all installed Foldkit packages together from the matching preview manifest, then run lint, typecheck, tests, build, screenshots, and browser checks before deploying the PR stage. Keep the PR unmerged until the upstream integration is released and validated here.
+This branch tracks the [Foldkit Blocks integration](https://github.com/foldkit/foldkit/pull/1655), pinned to verified preview `90746b32d2ca8bc0476de7a051ace396ca590ae0`. Update all installed Foldkit packages together from the matching preview manifest, then run lint, typecheck, tests, build, screenshots, and browser checks before deploying the PR stage. Keep the PR unmerged until the upstream integration is released and validated here.
 
-The preview declares exact Effect `4.0.0` peers, while our Alchemy version requires `^4.0.5`. We retain the existing single Effect `4.0.6` installation and verify it in this app; this is a peer-version mismatch to resolve before merging. The Foldkit lint preset checks Block ownership and wiring. Three pre-existing application conventions are explicitly retained: nullable API state, full-page navigation links (no client router), and browser time/ID calls. Those are separate from this composition migration.
+The preview accepts Effect `4.0.0 || 4.0.6`, resolving the earlier peer-version mismatch with Alchemy (`^4.0.5`). We retain one Effect `4.0.6` runtime with matching platform packages. The Foldkit lint preset checks Block ownership and wiring. Three pre-existing application conventions are explicitly retained: nullable API state, full-page navigation links (no client router), and browser time/ID calls. Those are separate from this composition migration.
 
 Alchemy is pinned, with three patches in `patches/`: an internal export, Cloudflare runtime reliability/deletion hooks, and Bun’s TypeScript loader. Review these when upgrading Alchemy. The vendored anti-slop lint rules retain their upstream license and attribution in `tools/oxlint`.
 
