@@ -1,49 +1,51 @@
 import { expect, it } from "vitest";
-import { init, Message, update } from "../src/App.ts";
+import { NotesBlock } from "../src/features/Notes.ts";
+import { NavigationBlock } from "../src/features/Navigation.ts";
+import { emptyBoard } from "@retro/domain/Room/Values";
+import {
+  templates,
+  columnsFor,
+  type Template,
+} from "@retro/domain/Room/Templates";
 
-const base = () =>
-  init({
-    actorId: "host",
-    roomId: "room",
-    participantId: "",
-    inviteToken: "",
-    name: "Host",
-  }).model;
+const context = (column = "mad") => ({
+  roomId: "room",
+  actorId: "host",
+  board: { ...emptyBoard, phase: "write" as const },
+  column,
+  busy: false,
+});
 
-it("keeps a separate draft in each category", () => {
-  const mad = update(
-    base(),
-    Message.Field({ field: "draft", value: "Mad draft" }),
+const { Message } = NotesBlock;
+
+const update = (
+  m: typeof NotesBlock.Model.Type,
+  msg: typeof Message.Type,
+  column = "mad",
+) => NotesBlock.update(m, msg, context(column));
+
+it("keeps a separate draft in each category, including after saving another", () => {
+  let m = update(
+    NotesBlock.init().model,
+    Message.Changed({ value: "Mad draft" }),
   ).model;
 
-  const sad = update(mad, Message.MobileColumn({ column: "sad" })).model;
-  expect(sad).toMatchObject({
-    mobileColumn: "sad",
-    categoryDirection: "next",
-    draft: "",
-  });
-
-  const typed = update(
-    sad,
-    Message.Field({ field: "draft", value: "Sad draft" }),
-  ).model;
-
-  const back = update(typed, Message.MobileColumn({ column: "mad" })).model;
-  expect(back).toMatchObject({
-    categoryDirection: "previous",
-    draft: "Mad draft",
-  });
-  const saved = update(back, Message.Succeeded({ op: "save" })).model;
-  expect(saved.drafts).toEqual({ mad: "", sad: "Sad draft" });
+  m = update(m, Message.InformedOfColumn({ column: "sad" })).model;
+  expect(m.draft).toBe("");
+  m = update(m, Message.Changed({ value: "Sad draft" }), "sad").model;
+  m = update(m, Message.InformedOfColumn({ column: "mad" })).model;
+  expect(m.draft).toBe("Mad draft");
+  m = update(m, Message.Saved()).model;
+  expect(m.drafts).toEqual({ mad: "", sad: "Sad draft" });
   expect(
-    update(saved, Message.MobileColumn({ column: "sad" })).model.draft,
+    update(m, Message.InformedOfColumn({ column: "sad" })).model.draft,
   ).toBe("Sad draft");
 });
 
-it("keeps new-note drafts separate from editing or deleting existing notes", () => {
+it("keeps a new draft separate from an existing note's edit or deletion", () => {
   const draft = update(
-    base(),
-    Message.Field({ field: "draft", value: "Unfinished new note" }),
+    NotesBlock.init().model,
+    Message.Changed({ value: "Unfinished" }),
   ).model;
 
   const edit = update(
@@ -51,62 +53,63 @@ it("keeps new-note drafts separate from editing or deleting existing notes", () 
     Message.Edit({ column: "mad", id: "existing", text: "Saved note" }),
   ).model;
 
-  const typed = update(
-    edit,
-    Message.Field({ field: "draft", value: "Edited note" }),
-  ).model;
+  const typed = update(edit, Message.Changed({ value: "Edited" })).model;
+  expect(typed.drafts.mad).toBe("Unfinished");
 
-  expect(typed.drafts.mad).toBe("Unfinished new note");
-
-  for (const message of [
-    Message.CancelEdit(),
-    Message.Succeeded({ op: "save" }),
-    Message.Succeeded({ op: "delete" }),
-  ]) {
-    expect(update(typed, message).model.draft).toBe("Unfinished new note");
-  }
-
-  expect(update(draft, Message.CancelEdit()).model.drafts.mad).toBe("");
+  for (const message of [Message.Cancel(), Message.Saved()])
+    expect(update(typed, message).model.draft).toBe("Unfinished");
+  expect(update(draft, Message.Cancel()).model.drafts.mad).toBe("");
 });
 
-it("keeps note edits and action forms in their current category", () => {
-  for (const model of [
-    { ...base(), editId: "note", editor: "mad" as const },
-    { ...base(), selected: "note", action: "Draft action" },
-  ]) {
+it("blocks category changes during edits and saves", () => {
+  const m = NavigationBlock.init().model;
+
+  const c = {
+    board: emptyBoard,
+    private: { notes: [], votes: [], sessions: [] },
+    busy: false,
+    editingAction: false,
+    editingNote: null,
+  };
+
+  for (const change of [
+    { editingAction: true },
+    { editingNote: "mad" },
+    { busy: true },
+  ])
     expect(
-      update(model, Message.MobileColumn({ column: "sad" })).model.mobileColumn,
+      NavigationBlock.update(
+        m,
+        NavigationBlock.Message.MobileColumn({ column: "sad" }),
+        { ...c, ...change },
+      ).model.mobileColumn,
     ).toBe("mad");
-  }
 });
 
-it("does not accept typing while a save is pending", () => {
-  const model = { ...base(), busy: true, draft: "Being saved" };
+it("does not accept typing while saving or after writing closes", () => {
+  const m = { ...NotesBlock.init().model, busy: true, draft: "Saving" };
+  expect(update(m, Message.Changed({ value: "Race" })).model).toBe(m);
   expect(
-    update(model, Message.Field({ field: "draft", value: "Racing input" }))
-      .model.draft,
-  ).toBe("Being saved");
+    NotesBlock.update(
+      { ...m, busy: false },
+      Message.Changed({ value: "Late" }),
+      { ...context(), board: { ...emptyBoard, phase: "reveal" } },
+    ).model.draft,
+  ).toBe("Saving");
 });
 
-import { emptyBoard } from "@retro/domain/Room/Values";
-import { templates, columnsFor, type Template } from "@retro/domain/Room/Templates";
+// SAFETY: templates is the exhaustive registry keyed by Template literals.
+for (const template of Object.keys(templates) as Template[])
+  it(`isolates ${template} drafts`, () => {
+    let m: typeof NotesBlock.Model.Type = NotesBlock.init().model;
 
-// SAFETY: templates is the exhaustive registry keyed by the Template literals.
-for (const template of Object.keys(templates) as Template[]) {
-  it(`opens ${template} at its first category and isolates drafts`, () => {
-    const columns = columnsFor(template);
-    let model = update(base(), Message.Entered({ roomId: "room", board: { ...emptyBoard, template } })).model;
-    expect(model.mobileColumn).toBe(columns[0]!.id);
-
-    for (const column of columns) {
-      model = update(model, Message.MobileColumn({ column: column.id })).model;
-      expect(model.draft).toBe("");
-      model = update(model, Message.Field({ field: "draft", value: column.title })).model;
+    for (const column of columnsFor(template)) {
+      m = update(m, Message.InformedOfColumn({ column: column.id })).model;
+      m = update(m, Message.Changed({ value: column.title }), column.id).model;
     }
 
-    for (const column of columns) {
-      model = update(model, Message.MobileColumn({ column: column.id })).model;
-      expect(model.draft).toBe(column.title);
-    }
+    for (const column of columnsFor(template))
+      expect(
+        update(m, Message.InformedOfColumn({ column: column.id })).model.draft,
+      ).toBe(column.title);
   });
-}

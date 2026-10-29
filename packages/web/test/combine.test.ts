@@ -1,77 +1,75 @@
-import { describe, it, expect } from "vitest";
-import { init, update, Message } from "../src/App.ts";
+import { expect, it } from "vitest";
+import { CombiningBlock } from "../src/features/Combining.ts";
 import { emptyBoard } from "@retro/domain/Room/Values";
 
-const base = () => ({
-  ...init({
-    participantId: "",
-    inviteToken: "",
-    actorId: "host",
-    roomId: "room",
-    name: "Alex",
-  }).model,
-  entered: true,
+const { Message } = CombiningBlock;
+
+const context = {
+  roomId: "room",
+  actorId: "host",
+  busy: false,
   board: {
     ...emptyBoard,
-    title: "Sprint",
     adminId: "host",
     phase: "reveal" as const,
     notes: [
-      { id: "a", text: "A", column: "mad" as const, authorId: "host" },
-      { id: "b", text: "B", column: "sad" as const, authorId: "guest" },
+      { id: "a", text: "A", column: "mad", authorId: "host" },
+      { id: "b", text: "B", column: "sad", authorId: "guest" },
     ],
   },
+};
+
+it("combines immediately on drop and keeps in-flight status through drag end", () => {
+  const m = CombiningBlock.update(
+    CombiningBlock.init().model,
+    Message.DragStart({ id: "a" }),
+    context,
+  ).model;
+
+  const result = CombiningBlock.update(m, Message.Drop({ id: "b" }), context);
+  expect(result.commands?.[0]?.args).toEqual({
+    roomId: "room",
+    sourceId: "a",
+    targetId: "b",
+  });
+  expect(
+    CombiningBlock.update(result.model, Message.DragEnd(), context).model.busy,
+  ).toBe(true);
 });
 
-describe("combine interaction", () => {
-  it("blocks combine and split outside Reveal and blocks participant splits", () => {
-    expect(update(base(), Message.Split({ id: "b" })).commands).toHaveLength(1);
+it("blocks combine and split outside reveal, participant requests, and self-drops", () => {
+  const m = { ...CombiningBlock.init().model, dragSource: "a" };
 
-    for (const phase of ["write", "vote", "actions", "closed"] as const) {
-      const m = {
-        ...base(),
-        board: { ...base().board, phase },
-        dragSource: "a",
-        mergeSource: "a",
-        mergeTarget: "b",
-      };
+  for (const phase of ["write", "vote", "actions", "closed"] as const)
+    for (const msg of [Message.Drop({ id: "b" }), Message.Split({ id: "b" })])
+      expect(
+        CombiningBlock.update(m, msg, {
+          ...context,
+          board: { ...context.board, phase },
+        }).commands,
+      ).toBeUndefined();
+  expect(
+    CombiningBlock.update(m, Message.Split({ id: "b" }), {
+      ...context,
+      actorId: "guest",
+    }).commands,
+  ).toBeUndefined();
+  expect(
+    CombiningBlock.update(m, Message.Drop({ id: "a" }), context).commands,
+  ).toBeUndefined();
+});
 
-      expect(update(m, Message.Drop({ id: "b" })).commands).toBeUndefined();
-      expect(update(m, Message.MergeConfirm()).commands).toBeUndefined();
-      expect(update(m, Message.Split({ id: "b" })).commands).toBeUndefined();
-    }
+it("clears a stale drag when permission or phase changes", () => {
+  const m = {
+    ...CombiningBlock.init().model,
+    dragSource: "a",
+    dropTarget: "b",
+  };
 
-    expect(
-      update({ ...base(), actorId: "guest" }, Message.Split({ id: "b" }))
-        .commands,
-    ).toBeUndefined();
+  const result = CombiningBlock.update(m, Message.InformedOfRoom(), {
+    ...context,
+    board: { ...context.board, phase: "vote" },
   });
-  it("combines immediately on drop without a confirmation picker", () => {
-    const m = update(base(), Message.DragStart({ id: "a" })).model;
-    const result = update(m, Message.Drop({ id: "b" }));
-    expect(result.commands).toHaveLength(1);
-    expect(result.model.busy).toBe(true);
-    expect(update(result.model, Message.DragEnd()).model.busy).toBe(true);
-  });
-  it("does not submit self-drops or a participant's forged selection", () => {
-    let m = update(base(), Message.DragStart({ id: "a" })).model;
-    m = update(m, Message.Drop({ id: "a" })).model;
-    expect(update(m, Message.MergeConfirm()).commands).toBeUndefined();
-    expect(
-      update(
-        { ...base(), actorId: "guest", mergeSource: "a", mergeTarget: "b" },
-        Message.MergeConfirm(),
-      ).commands,
-    ).toBeUndefined();
-  });
-  it("clears a stale selection when the room changes phase or a note disappears", () => {
-    const m = { ...base(), mergeSource: "a", mergeTarget: "b" };
 
-    const changed = update(
-      m,
-      Message.Board({ board: { ...m.board, phase: "vote" } }),
-    ).model;
-
-    expect([changed.mergeSource, changed.mergeTarget]).toEqual(["", ""]);
-  });
+  expect(result.model).toMatchObject({ dragSource: "", dropTarget: "" });
 });

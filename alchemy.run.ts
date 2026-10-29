@@ -11,7 +11,7 @@ export default Alchemy.Stack(
     providers: Cloudflare.providers(),
     state: Layer.unwrap(
       Effect.map(Alchemy.Stage, (stage) =>
-        stage === "prod"
+        stage === "prod" || /^pr-[1-9][0-9]*$/.test(stage)
           ? Cloudflare.state({ name: "retro" })
           : Alchemy.localState(),
       ),
@@ -20,34 +20,41 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const stage = yield* Alchemy.Stage;
 
-    const domain =
-      stage === "prod"
-        ? yield* Config.NonEmptyString("RETRO_DOMAIN")
-        : undefined;
+    const preview = /^pr-[1-9][0-9]*$/.test(stage);
+    const hosted = stage === "prod" || preview;
 
-    const email =
-      stage === "prod" ? yield* Config.NonEmptyString("RETRO_ADMIN_EMAIL") : "";
+    const baseDomain = hosted
+      ? yield* Config.NonEmptyString("RETRO_DOMAIN")
+      : undefined;
 
-    const issuer =
-      stage === "prod" ? yield* Config.NonEmptyString("RETRO_ACCESS_ISSUER") : "";
+    const domain = preview ? `${stage}.${baseDomain}` : baseDomain;
 
-    const access =
-      stage === "prod"
-        ? yield* Cloudflare.Access.Application("RetroAdminAccess", {
-            type: "self_hosted",
-            name: "Common Ground administration",
-            domain: `${domain}/admin`,
-            sessionDuration: "12h",
-            httpOnlyCookieAttribute: true,
-            policies: [
-              {
-                name: "Administrator",
-                decision: "allow",
-                include: [{ email }],
-              },
-            ],
-          })
-        : { aud: "local-disabled" };
+    const email = hosted
+      ? yield* Config.NonEmptyString("RETRO_ADMIN_EMAIL")
+      : "";
+
+    const issuer = hosted
+      ? yield* Config.NonEmptyString("RETRO_ACCESS_ISSUER")
+      : "";
+
+    const access = hosted
+      ? yield* Cloudflare.Access.Application("RetroAdminAccess", {
+          type: "self_hosted",
+          name: preview
+            ? `Retro ${stage} administration`
+            : "Common Ground administration",
+          domain: `${domain}/admin`,
+          sessionDuration: "12h",
+          httpOnlyCookieAttribute: true,
+          policies: [
+            {
+              name: "Administrator",
+              decision: "allow",
+              include: [{ email }],
+            },
+          ],
+        })
+      : { aud: "local-disabled" };
 
     const backend = yield* RetroWorker;
 
@@ -61,7 +68,7 @@ export default Alchemy.Stack(
         ADMIN_AUD: access.aud,
         ADMIN_EMAIL: email,
         ACCESS_ISSUER: issuer,
-        LOCAL_ADMIN: stage === "prod" ? "false" : "true",
+        LOCAL_ADMIN: hosted ? "false" : "true",
       },
       assets: {
         notFoundHandling: "single-page-application",

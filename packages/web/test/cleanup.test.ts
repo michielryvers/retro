@@ -1,39 +1,50 @@
-import { describe, expect, it } from "vitest";
-import { init, update, Message } from "../src/App.ts";
+import { expect, it } from "vitest";
+import { LifecycleBlock } from "../src/features/Lifecycle.ts";
 import { emptyBoard } from "@retro/domain/Room/Values";
 
-const finished = () => ({
-  ...init({
-    participantId: "",
-    inviteToken: "",
-    actorId: "host",
-    roomId: "room",
-    name: "Alex",
-  }).model,
+const context = {
+  roomId: "room",
+  actorId: "host",
+  busy: false,
+  voteSort: "highest" as const,
   board: {
     ...emptyBoard,
     title: "Sprint",
     adminId: "host",
     phase: "closed" as const,
   },
-  deleteTitle: "Sprint",
+};
+
+it("requires a finished room, facilitator, exact name and idle state", () => {
+  const m = { ...LifecycleBlock.init().model, deleteTitle: "Sprint" };
+  expect(
+    LifecycleBlock.update(m, LifecycleBlock.Message.DeleteRoom(), context)
+      .commands,
+  ).toHaveLength(1);
+
+  for (const c of [
+    { ...context, actorId: "guest" },
+    { ...context, busy: true },
+    { ...context, board: { ...context.board, phase: "actions" as const } },
+  ])
+    expect(
+      LifecycleBlock.update(m, LifecycleBlock.Message.DeleteRoom(), c).commands,
+    ).toBeUndefined();
+  expect(
+    LifecycleBlock.update(
+      { ...m, deleteTitle: "wrong" },
+      LifecycleBlock.Message.DeleteRoom(),
+      context,
+    ).commands,
+  ).toBeUndefined();
 });
 
-describe("finished room cleanup", () => {
-  it("requires a finished room, facilitator, exact name and idle state", () => {
-    const m = finished();
-    expect(update(m, Message.DeleteRoom()).commands).toHaveLength(1);
-
-    for (const invalid of [
-      { ...m, actorId: "guest" },
-      { ...m, deleteTitle: "wrong" },
-      { ...m, busy: true },
-      { ...m, board: { ...m.board, phase: "actions" as const } },
-    ])
-      expect(update(invalid, Message.DeleteRoom()).commands).toBeUndefined();
-  });
-  it("clears the typed confirmation on cancel or reopen", () => {
-    const result = update(finished(), Message.Cleanup());
-    expect(result.model.deleteTitle).toBe("");
-  });
+it("clears typed confirmation on cancel or reopen", () => {
+  expect(
+    LifecycleBlock.update(
+      { ...LifecycleBlock.init().model, deleteTitle: "Sprint" },
+      LifecycleBlock.Message.Cleanup(),
+      context,
+    ).model.deleteTitle,
+  ).toBe("");
 });

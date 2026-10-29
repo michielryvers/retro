@@ -1,5 +1,4 @@
 import { installRoomSheet } from "./roomSheet.ts";
-import { updateWithDrafts } from "./draftPersistence.ts";
 import { installCategorySwipe } from "./categorySwipe.ts";
 import { installKeyboardDrag } from "./keyboardDrag.ts";
 import { installTouchDrag } from "./touchDrag.ts";
@@ -10,9 +9,10 @@ import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Socket from "effect/socket/Socket";
-import { Runtime } from "foldkit";
+import { Program, Runtime } from "foldkit";
 import { RetroApi } from "@retro/domain/RetroApi.api";
-import { Flags, Model, init, view, subscriptions } from "./App.ts";
+import { Flags } from "./application/definition.ts";
+import { ApplicationBlock } from "./block.ts";
 import "@fontsource-variable/inter";
 import "@phosphor-icons/web/regular";
 import "./style.css";
@@ -67,17 +67,12 @@ const startup = async () => {
   installRoomSheet();
 
   Runtime.run(
-    Runtime.makeApplication({
-      Model,
+    Program.make({
+      block: ApplicationBlock,
       Flags,
-      init,
-      update: updateWithDrafts,
-      view,
-      subscriptions,
-      resources,
       container: document.getElementById("root"),
       devTools: false,
-    }),
+    }).provide(resources),
     {
       flags: Effect.succeed({
         actorId: id,

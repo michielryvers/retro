@@ -74,7 +74,7 @@ bun run deploy --stage prod --no-input --yes
 
 The token needs Workers Scripts Write, Account Settings Read, Secrets Store Write, and Access: Apps and Policies Write on the account, plus Zone Read, DNS Write, and Workers Routes Write on the site’s zone. See [Alchemy’s CI guide](https://alchemy.run/environments/ci/) for credentials and state setup.
 
-Pushes to `main` run checks and then deploy. Pull requests run checks without deployment credentials. Production deployments run one at a time. For a fork, update the repository guard in the workflow and allow `main` in your `production` environment.
+Pushes to `main` run checks and then deploy. Owner-authored, same-repository pull requests also deploy to `https://pr-N.<RETRO_DOMAIN>`. Each uses its own Alchemy stage, Workers, Durable Objects, and Access-protected admin screen. Closing the PR destroys its stage. Fork PRs and runs triggered by other actors receive checks only. Production deployments run one at a time. For a fork, update the repository guard in the workflow and allow `main` in your `production` environment.
 
 After a successful deployment, a separate job renders the actual app view with fixed fictional data and captures desktop/mobile screenshots. It commits changed images back to `main` using GitHub’s built-in token, without starting another workflow run. No live rooms or Cloudflare credentials are used for screenshots. The fixture and capture script live in `scripts/screenshots/`.
 
@@ -84,8 +84,14 @@ The `CommonGround` infrastructure identifiers preserve the original deployment. 
 
 - `packages/domain`: room rules, commands, events, and authorized views.
 - `packages/server`: Cloudflare hosting, authentication, and maintenance.
-- `packages/web`: the Foldkit interface.
+- `packages/web/src/application`: the room Block’s contracts, commands, subscriptions, update, and view.
+- `packages/web/src/block.ts`: checked root Block assembly; `main.ts` supplies the browser Program and RPC Layer.
+- `packages/web/src/AdminApp.ts`: the separate administration Block.
 - `scripts`: integration checks against a running local app.
+
+This branch tracks the [Foldkit Blocks integration](https://github.com/foldkit/foldkit/pull/1655), pinned to verified preview `90746b32d2ca8bc0476de7a051ace396ca590ae0`. Update all installed Foldkit packages together from the matching preview manifest, then run lint, typecheck, tests, build, screenshots, and browser checks before deploying the PR stage. Keep the PR unmerged until the upstream integration is released and validated here.
+
+The preview accepts Effect `4.0.0 || 4.0.6`, resolving the earlier peer-version mismatch with Alchemy (`^4.0.5`). We retain one Effect `4.0.6` runtime with matching platform packages. The Foldkit lint preset checks Block ownership and wiring. Three pre-existing application conventions are explicitly retained: nullable API state, full-page navigation links (no client router), and browser time/ID calls. Those are separate from this composition migration.
 
 Alchemy is pinned, with three patches in `patches/`: an internal export, Cloudflare runtime reliability/deletion hooks, and Bun’s TypeScript loader. Review these when upgrading Alchemy. The vendored anti-slop lint rules retain their upstream license and attribution in `tools/oxlint`.
 
