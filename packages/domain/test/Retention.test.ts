@@ -28,6 +28,7 @@ import { PreparedAccess } from "../src/PreparedAccess.context.ts";
 const story = Story.make(Retro, { layer: RoomRetentionLive, stub: [RoomCleanup] });
 const room = Room.ref("retention");
 const start = Date.parse("2026-01-01T12:00:00Z");
+const year = 365 * 24 * 60 * 60 * 1000;
 const week = 7 * 24 * 60 * 60 * 1000;
 
 const setup = [
@@ -39,7 +40,7 @@ const setup = [
   Story.when(room, new CreateRoom({ title: "Retention test", name: "Host", template: "mad-sad-glad", password: Redacted.make("abc") })),
 ];
 
-it.effect("concludes an unfinished room at seven days without revealing private notes, then deletes at fourteen", () => story(
+it.effect("concludes an unfinished room at seven days without revealing private notes, then retains it for a year", () => story(
   ...setup,
   Story.when(room, new SaveNote({ id: "secret", column: "mad", text: "Keep this private" })),
   Story.clock(start + week - 1),
@@ -50,16 +51,16 @@ it.effect("concludes an unfinished room at seven days without revealing private 
   Story.view(SharedBoard, room, (s) => {
     expect(s?.phase).toBe("closed");
     expect(s?.notes).toEqual([]);
-    expect(s?.deletesAt).toBe(start + 2 * week);
+    expect(s?.deletesAt).toBe(start + week + year);
   }),
-  Story.clock(start + 2 * week - 1),
+  Story.clock(start + week + year - 1),
   Story.when(room, new RequestRoomDeletion({})),
-  Story.clock(start + 2 * week),
+  Story.clock(start + week + year),
   Story.call(RoomCleanup.remove, { id: room.id, title: "Retention test" }),
   Story.succeed(RoomCleanup.remove, { deleted: true }),
 ));
 
-it.effect("deletes one week after an early conclusion; stale expiry and archive cannot extend retention", () => story(
+it.effect("deletes one year after an early conclusion; stale expiry and archive cannot extend retention", () => story(
   ...setup,
   Story.when(room, new RevealNotes({})),
   Story.when(room, new StartVoting({})),
@@ -70,18 +71,36 @@ it.effect("deletes one week after an early conclusion; stale expiry and archive 
   Story.clock(start + week),
   Story.state(room, (s) => expect(s.closedAt).toBe(start + 3600000)),
   Story.when(room, new ArchiveRoom({ archived: false })),
-  Story.clock(start + week + 3600000 - 1),
+  Story.clock(start + year + 3600000 - 1),
   Story.when(room, new RequestRoomDeletion({})),
-  Story.clock(start + week + 3600000),
+  Story.clock(start + year + 3600000),
   Story.call(RoomCleanup.remove, { id: room.id }),
   Story.succeed(RoomCleanup.remove, { deleted: true }),
 ));
 
 it.effect("late expiry uses the original deadline instead of extending the room lifetime", () => story(
   ...setup,
-  Story.clock(start + 3 * week),
+  Story.clock(start + year + 3 * week),
   Story.state(room, (s) => expect(s.closedAt).toBe(start + week)),
   Story.call(RoomCleanup.remove, { id: room.id }),
+  Story.succeed(RoomCleanup.remove, { deleted: true }),
+));
+
+it.effect("an existing seven-day alarm defers deletion to the year deadline without changing room data", () => story(
+  ...setup,
+  Story.when(room, new SaveNote({ id: "a", column: "mad", text: "Keep the team's work" })),
+  Story.when(room, new RevealNotes({})),
+  Story.when(room, new StartVoting({})),
+  Story.when(room, new FinishVoting({})),
+  Story.when(room, new CloseRoom({})),
+  Story.clock(start + week),
+  Story.when(room, new RequestRoomDeletion({})),
+  Story.view(SharedBoard, room, (s) => {
+    expect(s?.notes[0]?.text).toBe("Keep the team's work");
+    expect(s?.deletesAt).toBe(start + year);
+  }),
+  Story.clock(start + year),
+  Story.call(RoomCleanup.remove, { id: room.id, title: "Retention test" }),
   Story.succeed(RoomCleanup.remove, { deleted: true }),
 ));
 

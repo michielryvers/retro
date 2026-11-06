@@ -1,7 +1,7 @@
 import { columnsFor, tallyNotes } from "./Templates.ts";
 import { ExpireRoom } from "./ExpireRoom.command.ts";
-import { RequestRoomDeletion, RoomDeletionRequested } from "./RequestRoomDeletion.command.ts";
-import { RETENTION_WEEK_MS } from "./Retention.ts";
+import { RequestRoomDeletion, RoomDeletionRequested, RoomDeletionDeferred } from "./RequestRoomDeletion.command.ts";
+import { RETENTION_WEEK_MS, CLOSED_RETENTION_MS } from "./Retention.ts";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import { PreparedAccess } from "../PreparedAccess.context.ts";
@@ -560,10 +560,16 @@ export class Room extends Domain.Aggregate("RetroRoom", {
       DateTime.toEpochMillis(now) >= s.createdAt + RETENTION_WEEK_MS
         ? [new RoomClosed({ closedAt: s.createdAt + RETENTION_WEEK_MS })]
         : [],
-    RequestRoomDeletion: (s, _c, { now }) =>
-      s.phase === "closed" && DateTime.toEpochMillis(now) >= s.closedAt + RETENTION_WEEK_MS
+    RequestRoomDeletion: (s, _c, { now }) => {
+      if (s.phase !== "closed") return [];
+      const deletesAt = s.closedAt + CLOSED_RETENTION_MS;
+
+      // Previously scheduled seven-day alarms survive a deployment. Recheck
+      // the current policy and move those alarms to the new deadline.
+      return DateTime.toEpochMillis(now) >= deletesAt
         ? [new RoomDeletionRequested({ title: s.title })]
-        : [],
+        : [new RoomDeletionDeferred({ deletesAt })];
+    },
     CloseRoom: Effect.fn(function* (s, _c, { now }) {
       yield* phase(s, ["actions"], true);
 
@@ -692,6 +698,7 @@ export class Room extends Domain.Aggregate("RetroRoom", {
       actions: s.actions.filter((a) => a.id !== e.id),
     }),
     RoomDeletionRequested: (s) => s,
+    RoomDeletionDeferred: (s) => s,
     RoomClosed: (s, e) => ({
       ...s,
       closedAt: e.closedAt,

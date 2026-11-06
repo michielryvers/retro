@@ -3,7 +3,7 @@ import { grantParticipant } from "./Access.ts";
 import { restoreCombination } from "./Combination.ts";
 import { combineBoard } from "./CombineNotes.command.ts";
 import * as Domain from "@alchemy.run/domain";
-import { RETENTION_WEEK_MS } from "./Retention.ts";
+import { CLOSED_RETENTION_MS } from "./Retention.ts";
 import * as Effect from "effect/Effect";
 import { Room } from "./Room.aggregate.ts";
 import { BoardState, emptyBoard } from "./Values.ts";
@@ -111,9 +111,10 @@ export class SharedBoard extends Domain.View("SharedBoard", {
       ...s,
       actions: s.actions.filter((a) => a.id !== e.id),
     }),
+    RoomDeletionDeferred: (s, e) => ({ ...s, deletesAt: e.deletesAt }),
     RoomClosed: (s, e) => ({
       ...s,
-      deletesAt: e.closedAt + RETENTION_WEEK_MS,
+      deletesAt: e.closedAt + CLOSED_RETENTION_MS,
       phase: "closed" as const,
       timer: { endsAt: 0, remainingMs: 0 },
     }),

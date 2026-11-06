@@ -29,7 +29,7 @@ Swipe between categories, vote, and follow the action items from a small screen.
 
 Retro runs on **[Alchemy Domain](https://alchemy.run/domain/)** and **[Cloudflare Durable Objects](https://developers.cloudflare.com/durable-objects/)**. Each room has its own persistent state, and authorized views keep everyone in sync while protecting private notes and votes. The interface is built with **[Foldkit](https://foldkit.dev/)**.
 
-Unfinished rooms close automatically after a week. Closed rooms are deleted seven days later; export anything you want to keep.
+Unfinished rooms close automatically after a week. Closed rooms are retained for 365 days after conclusion; export a copy to keep it longer. Existing seven-day deletion alarms recheck the new policy and reschedule without deleting the room.
 
 <details>
 <summary><strong>Run it yourself</strong></summary>
