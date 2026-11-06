@@ -17,9 +17,9 @@
     "screenshots": "bun scripts/screenshots/capture.ts"
   },
   "dependencies": {
-    "@alchemy.run/cloudflare": "https://pkg.alchemy.run/@alchemy.run/cloudflare/72f84cc",
-    "@alchemy.run/domain": "https://pkg.alchemy.run/@alchemy.run/domain/72f84cc",
-    "@alchemy.run/frontend-frameworks": "https://pkg.alchemy.run/@alchemy.run/frontend-frameworks/72f84cc",
+    "@alchemy.run/cloudflare": "./vendor/alchemy/alchemy.run-cloudflare.tgz",
+    "@alchemy.run/domain": "./vendor/alchemy/alchemy.run-domain.tgz",
+    "@alchemy.run/frontend-frameworks": "./vendor/alchemy/alchemy.run-frontend-frameworks.tgz",
     "@effect/platform-browser": "4.0.6",
     "@effect/platform-bun": "4.0.6",
     "@effect/platform-node": "4.0.6",
@@ -32,7 +32,7 @@
     "@retro/domain": "workspace:*",
     "@retro/server": "workspace:*",
     "@retro/web": "workspace:*",
-    "alchemy": "https://pkg.alchemy.run/alchemy/72f84cc",
+    "alchemy": "./vendor/alchemy/alchemy.tgz",
     "effect": "4.0.6",
     "foldkit": "0.169.0",
     "jose": "^6.2.13",
@@ -56,11 +56,26 @@
   ],
   "overrides": {
     "effect": "4.0.6",
-    "@effect/platform-node-shared": "4.0.6"
+    "@effect/platform-node-shared": "4.0.6",
+    "@alchemy.run/acme": "./vendor/alchemy/alchemy.run-acme.tgz",
+    "@alchemy.run/cloudflare": "./vendor/alchemy/alchemy.run-cloudflare.tgz",
+    "@alchemy.run/cloudflare-runtime": "./vendor/alchemy/alchemy.run-cloudflare-runtime.tgz",
+    "@alchemy.run/docker": "./vendor/alchemy/alchemy.run-docker.tgz",
+    "@alchemy.run/domain": "./vendor/alchemy/alchemy.run-domain.tgz",
+    "@alchemy.run/frontend-frameworks": "./vendor/alchemy/alchemy.run-frontend-frameworks.tgz",
+    "@alchemy.run/node-utils": "./vendor/alchemy/alchemy.run-node-utils.tgz",
+    "@alchemy.run/sql": "./vendor/alchemy/alchemy.run-sql.tgz",
+    "@distilled.cloud/acme": "./vendor/alchemy/distilled.cloud-acme.tgz",
+    "@distilled.cloud/aws": "./vendor/alchemy/distilled.cloud-aws.tgz",
+    "@distilled.cloud/aws4signer": "./vendor/alchemy/distilled.cloud-aws4signer.tgz",
+    "@distilled.cloud/cloudflare": "./vendor/alchemy/distilled.cloud-cloudflare.tgz",
+    "@distilled.cloud/core": "./vendor/alchemy/distilled.cloud-core.tgz",
+    "@distilled.cloud/iceberg": "./vendor/alchemy/distilled.cloud-iceberg.tgz",
+    "alchemy": "./vendor/alchemy/alchemy.tgz"
   },
   "patchedDependencies": {
-    "@alchemy.run/domain@https://pkg.alchemy.run/@alchemy.run/domain/72f84cc": "patches/domain-internal-export.patch",
-    "@alchemy.run/cloudflare@https://pkg.alchemy.run/@alchemy.run/cloudflare/72f84cc": "patches/cloudflare-runtime.patch",
-    "alchemy@https://pkg.alchemy.run/alchemy/72f84cc": "patches/alchemy-bun-node-loader.patch"
+    "@alchemy.run/cloudflare@./vendor/alchemy/alchemy.run-cloudflare.tgz": "patches/cloudflare-runtime.patch",
+    "@alchemy.run/domain@./vendor/alchemy/alchemy.run-domain.tgz": "patches/domain-internal-export.patch",
+    "alchemy@./vendor/alchemy/alchemy.tgz": "patches/alchemy-bun-node-loader.patch"
   }
 }
