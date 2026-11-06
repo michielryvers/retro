@@ -14,6 +14,9 @@ const rooms = ["First", "Second"].map((title, i) => ({
 }));
 
 const base = () => ({
+  transferBusy: false,
+  preview: null,
+  importPreview: false,
   rooms,
   pending: [],
   bulkTotal: 0,

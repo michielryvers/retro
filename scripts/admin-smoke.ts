@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 import { RetroApi } from "../packages/domain/src/RetroApi.api.ts";
 import { RoomId } from "../packages/domain/src/Room/Room.id.ts";
 
-const origin = "http://localhost:5187";
+const origin = process.argv[2] ?? "http://localhost:5187";
 const room = RoomId.make(crypto.randomUUID());
 const title = `Deletion QA ${room}`;
 

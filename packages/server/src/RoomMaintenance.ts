@@ -1,3 +1,6 @@
+import type { RoomSummary } from "@retro/domain/HttpContracts";
+import { exportArchive } from "./ArchiveExport.ts";
+import { decodeArchive, type RetroArchive } from "@retro/domain/RetroArchive";
 import type { AggregateExtension } from "@alchemy.run/cloudflare/Domain";
 import { makeRpcStub } from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
@@ -40,6 +43,68 @@ export const roomMaintenance: AggregateExtension = (name, state, storage) =>
           yield* state.storage.put("admin-indexed", true);
         }).pipe(Effect.orDie),
       methods: {
+        exportArchive: (id: string) =>
+          exclusive(
+            Effect.gen(function* () {
+              if (yield* state.storage.get("deleted"))
+                return yield* Effect.die("Room deleted");
+              const meta = yield* state.storage.get<{ state: unknown }>("meta");
+
+              if (!meta) return yield* Effect.die("Room not found");
+
+              const room = yield* Schema.decodeUnknownEffect(
+                Schema.toCodecJson(RoomState),
+              )(meta.state).pipe(Effect.orDie);
+
+              return exportArchive(id, room);
+            }),
+          ),
+        readArchive: (id: string) =>
+          state.storage.get<RetroArchive>(`archive:${id}`),
+        listArchives: () =>
+          state.storage
+            .list<RoomSummary>({ prefix: "archive-summary:" })
+            .pipe(Effect.map((rows) => [...rows.values()])),
+        importArchive: (id: string, input: RetroArchive) =>
+          exclusive(
+            Effect.gen(function* () {
+              const archive = decodeArchive(input);
+              yield* state.storage.transaction(
+                Effect.gen(function* () {
+                  yield* state.storage.put(`archive:${id}`, archive);
+                  yield* state.storage.put(`archive-summary:${id}`, {
+                    id,
+                    title: archive.title,
+                    template: archive.template,
+                    imported: true,
+                    phase: "closed",
+                    participants: archive.participants.length,
+                    notes: archive.notes.length - archive.combinations.length,
+                    actions: archive.actions.length,
+                    createdAt: archive.createdAt,
+                    updatedAt: archive.closedAt,
+                  });
+                }),
+              );
+            }),
+          ),
+        deleteArchive: (id: string, title: string) =>
+          exclusive(
+            Effect.gen(function* () {
+              const archive = yield* state.storage.get<RetroArchive>(
+                `archive:${id}`,
+              );
+
+              if (!archive || archive.title !== title)
+                return yield* Effect.die("Archive name does not match");
+              yield* state.storage.transaction(
+                Effect.gen(function* () {
+                  yield* state.storage.delete(`archive:${id}`);
+                  yield* state.storage.delete(`archive-summary:${id}`);
+                }),
+              );
+            }),
+          ),
         registerRoom: (id: string) =>
           exclusive(
             Effect.gen(function* () {

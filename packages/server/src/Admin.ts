@@ -1,3 +1,4 @@
+import { decodeArchive, type RetroArchive } from "@retro/domain/RetroArchive";
 import { RoomSummary as Summary } from "@retro/domain/Room/RoomSummary.view";
 import { Room } from "@retro/domain/Room/Room.aggregate";
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
@@ -21,6 +22,11 @@ export class Environment extends Context.Service<
 >()("Cloudflare.Workers.WorkerEnvironment") {}
 
 type AdminStub = {
+  exportArchive: (id: string) => Effect.Effect<RetroArchive, Error>;
+  readArchive: (id: string) => Effect.Effect<RetroArchive | undefined, Error>;
+  listArchives: () => Effect.Effect<RoomSummary[], Error>;
+  importArchive: (id: string, data: RetroArchive) => Effect.Effect<void, Error>;
+  deleteArchive: (id: string, title: string) => Effect.Effect<void, Error>;
   listRooms: () => Effect.Effect<Array<{ id: string }>, Error>;
   forgetRoom: (id: string) => Effect.Effect<void, Error>;
   purge: (authorization?: {
@@ -64,6 +70,8 @@ export const administration = Effect.gen(function* () {
         });
     }
 
+    result.push(...(yield* directory.listArchives()));
+
     return result.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   });
 
@@ -71,6 +79,14 @@ export const administration = Effect.gen(function* () {
     Effect.gen(function* () {
       if (!/^[a-zA-Z0-9-]{1,100}$/.test(id))
         return yield* Effect.die("Invalid room");
+
+      if (id.startsWith("archive-")) {
+        if (actorId) return yield* Effect.die("Admin access required");
+        yield* directory.deleteArchive(id, title);
+
+        return { deleted: true };
+      }
+
       const room = stub(rooms, id);
       const summary = Option.getOrNull(yield* summaries.query(Room.ref(id)));
 
@@ -102,5 +118,37 @@ export const administration = Effect.gen(function* () {
       return { deleted: true };
     });
 
-  return { list, remove };
+  const exportRoom = (id: string) =>
+    Effect.gen(function* () {
+      if (!/^[a-zA-Z0-9-]{1,100}$/.test(id))
+        return yield* Effect.die("Invalid room");
+
+      if (id.startsWith("archive-")) {
+        const archive = yield* directory.readArchive(id);
+
+        if (!archive) return yield* Effect.die("Archive not found");
+
+        return archive;
+      }
+
+      return yield* stub(rooms, id).exportArchive(id);
+    });
+
+  const importRoom = (input: RetroArchive) =>
+    Effect.gen(function* () {
+      const archive = decodeArchive(input);
+      // Canonical schema field order makes retries / repeated uploads idempotent.
+      const bytes = new TextEncoder().encode(JSON.stringify(archive));
+
+      const hash = yield* Effect.promise(() =>
+        crypto.subtle.digest("SHA-256", bytes),
+      );
+
+      const id = `archive-${Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("")}`;
+      yield* directory.importArchive(id, archive);
+
+      return { id };
+    });
+
+  return { list, remove, exportRoom, importRoom };
 });

@@ -193,3 +193,19 @@ it.live(
       );
     }).pipe(Effect.scoped, Effect.provide(World)),
 );
+
+
+it.live("does not let public commands create rooms over admin or archive identifiers", () =>
+  Effect.gen(function* () {
+    const api = yield* RetroApi.testClient;
+
+    for (const id of ["archive-content-hash", "__admin_directory__"]) {
+      const result = yield* api.CreateRoom({
+        target: RoomId.make(id), title: "Reserved", name: "Guest",
+        template: "mad-sad-glad", password: Redacted.make(testPassword),
+      }, options(guest)).pipe(Effect.exit);
+
+      expect(result._tag).toBe("Failure");
+    }
+  }).pipe(Effect.scoped, Effect.provide(World)),
+);
