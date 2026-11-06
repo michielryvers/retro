@@ -827,12 +827,12 @@ export const update = (
       PreviewLoaded: (msg) => ({
         model: m.entered ? m : { ...m, invitationPreview: msg.preview },
       }),
+      // A suspended tab can retain a socket that looks open but no longer
+      // delivers. Restart both reads so their initial snapshots catch it up.
       CheckRoom: () => ({
-        model: m,
-        commands:
-          m.entered && !m.busy
-            ? [Resume({ roomId: m.roomId, invitation: true })]
-            : [],
+        model: m.entered
+          ? { ...m, reconnect: m.reconnect + 1, connected: false }
+          : m,
       }),
       TogglePassword: () => ({
         model: { ...m, showPassword: !m.showPassword },
@@ -1606,7 +1606,14 @@ export const subscriptions = Subscription.make<Model, Message, Services>()(
         modelToDependencies: (m) => ({ active: m.entered }),
         dependenciesToStream: ({ active }) =>
           active
-            ? Stream.fromEventListener(window, "focus").pipe(
+            ? Stream.mergeAll({ concurrency: "unbounded" })([
+                Stream.fromEventListener(window, "focus"),
+                Stream.fromEventListener(window, "pageshow"),
+                Stream.fromEventListener(document, "visibilitychange").pipe(
+                  Stream.filter(() => document.visibilityState === "visible"),
+                ),
+              ]).pipe(
+                Stream.debounce("100 millis"),
                 Stream.map(() => Message.CheckRoom()),
               )
             : Stream.empty,

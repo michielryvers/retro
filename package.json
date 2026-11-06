@@ -13,8 +13,9 @@
     "deploy": "alchemy deploy",
     "smoke": "bun scripts/smoke.ts",
     "lint": "oxlint .",
-    "test:integration": "bun scripts/smoke.ts && bun scripts/facilitation-smoke.ts && bun scripts/cleanup-smoke.ts && bun scripts/admin-smoke.ts && bun scripts/websocket-smoke.ts",
-    "screenshots": "bun scripts/screenshots/capture.ts"
+    "test:integration": "bun scripts/smoke.ts && bun scripts/facilitation-smoke.ts && bun scripts/cleanup-smoke.ts && bun scripts/admin-smoke.ts && bun scripts/websocket-smoke.ts && bun scripts/combining-live-smoke.ts",
+    "screenshots": "bun scripts/screenshots/capture.ts",
+    "test:combining-browser": "bun scripts/combining-browser.ts"
   },
   "dependencies": {
     "@alchemy.run/cloudflare": "https://pkg.alchemy.run/@alchemy.run/cloudflare/72f84cc",
