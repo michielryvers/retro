@@ -10,7 +10,7 @@ export const RoomCleanupLive = RoomCleanup.toLayer(
     const admin = administration.pipe(Effect.provideService(RoomSummary, summaries));
 
     return { remove: ({ id, title }) => admin.pipe(
-      Effect.flatMap((service) => service.remove(id, title)),
+      Effect.flatMap((service) => service.remove(id, title, undefined, true)),
       Effect.orDie,
     ) };
   }),

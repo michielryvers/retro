@@ -1,7 +1,8 @@
 import { columnsFor, tallyNotes } from "./Templates.ts";
 import { ExpireRoom } from "./ExpireRoom.command.ts";
 import { RequestRoomDeletion, RoomDeletionRequested } from "./RequestRoomDeletion.command.ts";
-import { RETENTION_WEEK_MS } from "./Retention.ts";
+import { roomClosesAt, roomDeletesAt, deletionDue } from "./Retention.ts";
+import { RoomRetentionScheduled } from "./RoomRetentionScheduled.event.ts";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import { PreparedAccess } from "../PreparedAccess.context.ts";
@@ -555,15 +556,21 @@ export class Room extends Domain.Aggregate("RetroRoom", {
 
       return [new ActionDeleted({ id: c.id })];
     }),
-    ExpireRoom: (s, _c, { now }) =>
-      s.lifecycle === "created" && s.phase !== "closed" &&
-      DateTime.toEpochMillis(now) >= s.createdAt + RETENTION_WEEK_MS
-        ? [new RoomClosed({ closedAt: s.createdAt + RETENTION_WEEK_MS })]
-        : [],
-    RequestRoomDeletion: (s, _c, { now }) =>
-      s.phase === "closed" && DateTime.toEpochMillis(now) >= s.closedAt + RETENTION_WEEK_MS
+    ExpireRoom: (s, _c, { now }) => {
+      if (s.lifecycle !== "created" || s.phase === "closed") return [];
+      const at = roomClosesAt(s.createdAt);
+
+      return DateTime.toEpochMillis(now) >= at
+        ? [new RoomClosed({ closedAt: at })]
+        : [new RoomRetentionScheduled({ operation: "close", at })];
+    },
+    RequestRoomDeletion: (s, _c, { now }) => {
+      if (s.lifecycle !== "created" || s.phase !== "closed") return [];
+
+      return deletionDue(s, DateTime.toEpochMillis(now))
         ? [new RoomDeletionRequested({ title: s.title })]
-        : [],
+        : [new RoomRetentionScheduled({ operation: "delete", at: roomDeletesAt(s.closedAt) })];
+    },
     CloseRoom: Effect.fn(function* (s, _c, { now }) {
       yield* phase(s, ["actions"], true);
 
@@ -692,6 +699,7 @@ export class Room extends Domain.Aggregate("RetroRoom", {
       actions: s.actions.filter((a) => a.id !== e.id),
     }),
     RoomDeletionRequested: (s) => s,
+    RoomRetentionScheduled: (s) => s,
     RoomClosed: (s, e) => ({
       ...s,
       closedAt: e.closedAt,

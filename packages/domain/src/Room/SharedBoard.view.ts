@@ -3,7 +3,7 @@ import { grantParticipant } from "./Access.ts";
 import { restoreCombination } from "./Combination.ts";
 import { combineBoard } from "./CombineNotes.command.ts";
 import * as Domain from "@alchemy.run/domain";
-import { RETENTION_WEEK_MS } from "./Retention.ts";
+import { roomDeletesAt } from "./Retention.ts";
 import * as Effect from "effect/Effect";
 import { Room } from "./Room.aggregate.ts";
 import { BoardState, emptyBoard } from "./Values.ts";
@@ -24,6 +24,9 @@ const withNotes = (
 
 // State subscriptions publish snapshots without retaining a full-board event history.
 export class SharedBoard extends Domain.View("SharedBoard", {
+  // Recompute existing keys in place from their preserved aggregate history.
+  // This updates old seven-day dates without replacing any DO namespace.
+  version: 1,
   from: [Room],
   key: Room,
   state: BoardState,
@@ -113,7 +116,7 @@ export class SharedBoard extends Domain.View("SharedBoard", {
     }),
     RoomClosed: (s, e) => ({
       ...s,
-      deletesAt: e.closedAt + RETENTION_WEEK_MS,
+      deletesAt: roomDeletesAt(e.closedAt),
       phase: "closed" as const,
       timer: { endsAt: 0, remainingMs: 0 },
     }),

@@ -8,6 +8,8 @@ import * as Schema from "effect/Schema";
 import { RoomState } from "@retro/domain/Room/RoomState";
 import { Grant, grantParticipant } from "@retro/domain/Room/Access";
 import { Environment } from "./Admin.ts";
+import type { PurgeAuthorization } from "./PurgeAuthorization.ts";
+import { purgeWithRetention } from "./PurgeRetention.ts";
 
 const Manifest = Schema.Struct({
   adminId: Schema.String,
@@ -129,7 +131,7 @@ export const roomMaintenance: AggregateExtension = (name, state, storage) =>
               }),
             ),
           ),
-        purge: (authorization?: { actorId: string; title: string }) =>
+        purge: (authorization?: PurgeAuthorization) =>
           exclusive(
             Effect.gen(function* () {
               const previous = yield* state.storage.get<Manifest | true>(
@@ -158,8 +160,17 @@ export const roomMaintenance: AggregateExtension = (name, state, storage) =>
 
               if (!manifest) return yield* Effect.die("Room does not exist");
 
+              // Last line of defence, inside the same exclusive operation as
+              // physical deletion. Protect against already queued old cleanup
+              // calls as well as stale Domain timers/events. A tombstone means
+              // deletion already started; allow its cleanup to finish safely.
+              if (authorization?.automatic && !previous) {
+                if (authorization.title !== manifest.title)
+                  return yield* Effect.die("Room name does not match");
+              }
+
               if (
-                authorization &&
+                authorization?.actorId &&
                 (grantParticipant(manifest.grants, authorization.actorId) !==
                   manifest.adminId ||
                   authorization.title !== manifest.title ||
@@ -168,9 +179,11 @@ export const roomMaintenance: AggregateExtension = (name, state, storage) =>
                 return yield* Effect.die(
                   "Only the facilitator can delete a finished room, using its exact name.",
                 );
-              yield* storage.purge(manifest);
 
-              return manifest;
+              return yield* purgeWithRetention(
+                room, authorization?.automatic === true, !!previous,
+                storage.purge(manifest).pipe(Effect.as(manifest)),
+              );
             }),
           ),
       },

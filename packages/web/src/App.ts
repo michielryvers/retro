@@ -2011,7 +2011,7 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                     : null,
                   feedback(),
                   !m.roomId ? h.p([h.Class("muted")], [
-                    "Rooms close after 7 days and are deleted 7 days after closing.",
+                    "Unfinished rooms stay open for 365 days. Closed retros remain available for 365 days after closing.",
                   ]) : null,
 
                   !m.roomId || m.inviteToken
@@ -2873,7 +2873,7 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                           ],
                         ),
                         h.p([h.Class("muted")], [
-                          `Download before ${new Date(b.deletesAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}. This retro is then deleted automatically.`,
+                          `Available until ${new Date(b.deletesAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}. Download a summary before this retro is deleted automatically.`,
                         ]),
                         h.a(
                           [h.Href("/"), h.Class("home-link")],
