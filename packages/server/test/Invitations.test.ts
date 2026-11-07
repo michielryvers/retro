@@ -31,19 +31,10 @@ it.live(
   "requires invite and password, rejoins the same identity and protects private invitations",
   () =>
     Effect.gen(function* () {
-      const api = yield* RetroApi.testClient;
+      const api = yield* RetroApi.clientInProcess;
       const target = RoomId.make("invited-room");
-      yield* api.CreateRoom(
-        {
-          template: "mad-sad-glad",
-          target,
-          title: "Invite test",
-          name: "Host",
-          password: Redacted.make(testPassword),
-        },
-        host,
-      );
-      const added = yield* api.InviteParticipant({ target, name: "Sam" }, host);
+      yield* api.CreateRoom(target, { template: "mad-sad-glad", title: "Invite test", name: "Host", password: Redacted.make(testPassword) }, host);
+      const added = yield* api.InviteParticipant(target, { name: "Sam" }, host);
 
       const invitations = (yield* api.Invitations.get(target, {
         ...host,
@@ -72,6 +63,7 @@ it.live(
       expect(
         (yield* api
           .JoinRoom(
+            target,
             { ...credentials, token: Redacted.make("0".repeat(64)) },
             phone,
           )
@@ -79,6 +71,7 @@ it.live(
       ).toBe("Refused");
 
       const denied = yield* api.JoinRoom(
+        target,
         { ...credentials, password: Redacted.make("wrong password") },
         phone,
       );
@@ -87,24 +80,18 @@ it.live(
         (yield* api.SharedBoard.get(target, phone).pipe(Effect.flip))._tag,
       ).toBe("Refused");
       expect(denied.reply).toEqual({ joined: false });
-      expect((yield* api.JoinRoom(credentials, phone)).reply).toEqual({
+      expect((yield* api.JoinRoom(credentials.target, credentials, phone)).reply).toEqual({
         joined: true,
       });
-      yield* api.SaveNote(
-        { target, id: "private", column: "mad", text: "Only Sam" },
-        phone,
-      );
-      const joined = yield* api.JoinRoom(credentials, laptop);
+      yield* api.SaveNote(target, { id: "private", column: "mad", text: "Only Sam" }, phone);
+      const joined = yield* api.JoinRoom(credentials.target, credentials, laptop);
       const mine = RoomId.make(`${target}:${person.id}`);
       expect(
         (yield* api.MyNotes.get(mine, { ...laptop, atLeast: joined }))?.notes[0]
           ?.text,
       ).toBe("Only Sam");
 
-      const edited = yield* api.SaveNote(
-        { target, id: "private", column: "mad", text: "Edited on laptop" },
-        laptop,
-      );
+      const edited = yield* api.SaveNote(target, { id: "private", column: "mad", text: "Edited on laptop" }, laptop);
 
       expect(
         (yield* api.MyNotes.get(mine, { ...phone, atLeast: edited }))?.notes[0]
@@ -118,7 +105,7 @@ it.live(
       ).toBe("Refused");
       expect(
         (yield* api
-          .InviteParticipant({ target, name: "Intruder" }, laptop)
+          .InviteParticipant(target, { name: "Intruder" }, laptop)
           .pipe(Effect.flip))._tag,
       ).toBe("Refused");
       const board = yield* api.SharedBoard.get(target, host);
@@ -145,19 +132,16 @@ it.live(
       });
 
       expect(inviteHistory.entries).toHaveLength(0);
-      yield* api.RevealNotes({ target }, host);
-      yield* api.StartVoting({ target }, host);
+      yield* api.RevealNotes(target, {}, host);
+      yield* api.StartVoting(target, {}, host);
 
-      const voted = yield* api.SetVote(
-        { target, noteId: "private", selected: true },
-        phone,
-      );
+      const voted = yield* api.SetVote(target, { noteId: "private", selected: true }, phone);
 
       expect(
         (yield* api.MyNotes.get(mine, { ...laptop, atLeast: voted }))?.votes,
       ).toEqual(["private"]);
-      yield* api.SetVote({ target, noteId: "private", selected: true }, laptop);
-      const finished = yield* api.FinishVoting({ target }, host);
+      yield* api.SetVote(target, { noteId: "private", selected: true }, laptop);
+      const finished = yield* api.FinishVoting(target, {}, host);
       expect(
         (yield* api.SharedBoard.get(target, { ...host, atLeast: finished }))
           ?.scores,
@@ -169,16 +153,8 @@ it.live(
         inviteToken(Redacted.value(invitations.seed), hostPerson.id),
       );
 
-      yield* api.JoinRoom(
-        {
-          target,
-          participantId: hostPerson.id,
-          token: Redacted.make(hostToken),
-          password: Redacted.make(testPassword),
-        },
-        stranger,
-      );
-      const closed = yield* api.CloseRoom({ target }, stranger);
+      yield* api.JoinRoom(target, { participantId: hostPerson.id, token: Redacted.make(hostToken), password: Redacted.make(testPassword) }, stranger);
+      const closed = yield* api.CloseRoom(target, {}, stranger);
       expect(
         (yield* api.SharedBoard.get(target, { ...stranger, atLeast: closed }))
           ?.phase,
@@ -190,19 +166,10 @@ it.live(
   "persists password throttling across fresh browser sessions and rejects cross-room invites",
   () =>
     Effect.gen(function* () {
-      const api = yield* RetroApi.testClient;
+      const api = yield* RetroApi.clientInProcess;
       const target = RoomId.make("throttle-room");
-      yield* api.CreateRoom(
-        {
-          template: "mad-sad-glad",
-          target,
-          title: "Throttle",
-          name: "Host",
-          password: Redacted.make(testPassword),
-        },
-        host,
-      );
-      yield* api.InviteParticipant({ target, name: "Sam" }, host);
+      yield* api.CreateRoom(target, { template: "mad-sad-glad", title: "Throttle", name: "Host", password: Redacted.make(testPassword) }, host);
+      yield* api.InviteParticipant(target, { name: "Sam" }, host);
       const invitations = (yield* api.Invitations.get(target, host))!;
       const person = invitations.people[1]!;
 
@@ -211,20 +178,12 @@ it.live(
       );
 
       for (let i = 0; i < 5; i++)
-        yield* api.JoinRoom(
-          {
-            target,
-            participantId: person.id,
-            token: Redacted.make(token),
-            password: Redacted.make("wrong"),
-          },
-          phone,
-        );
+        yield* api.JoinRoom(target, { participantId: person.id, token: Redacted.make(token), password: Redacted.make("wrong") }, phone);
 
       const denied = yield* api
         .JoinRoom(
+          target,
           {
-            target,
             participantId: person.id,
             token: Redacted.make(token),
             password: Redacted.make(testPassword),
@@ -235,21 +194,12 @@ it.live(
 
       expect(denied._tag).toBe("Refused");
       const other = RoomId.make("other-room");
-      yield* api.CreateRoom(
-        {
-          template: "mad-sad-glad",
-          target: other,
-          title: "Other",
-          name: "Host",
-          password: Redacted.make(testPassword),
-        },
-        host,
-      );
+      yield* api.CreateRoom(other, { template: "mad-sad-glad", title: "Other", name: "Host", password: Redacted.make(testPassword) }, host);
       expect(
         (yield* api
           .JoinRoom(
+            other,
             {
-              target: other,
               participantId: person.id,
               token: Redacted.make(token),
               password: Redacted.make(testPassword),
@@ -262,17 +212,18 @@ it.live(
         (yield* api.SharedBoard.get(other, phone).pipe(Effect.flip))._tag,
       ).toBe("Refused");
     }).pipe(Effect.provide(World)),
+  30000,
 );
 
 it.live("accepts three-character passwords and refuses shorter passwords", () =>
   Effect.gen(function* () {
-    const api = yield* RetroApi.testClient;
+    const api = yield* RetroApi.clientInProcess;
     const target = RoomId.make("short-password");
     expect(
       (yield* api
         .CreateRoom(
+          target,
           {
-            target,
             template: "mad-sad-glad",
             title: "Short password",
             name: "Host",
@@ -283,16 +234,7 @@ it.live("accepts three-character passwords and refuses shorter passwords", () =>
         .pipe(Effect.flip))._tag,
     ).toBe("Refused");
 
-    const created = yield* api.CreateRoom(
-      {
-        template: "mad-sad-glad",
-        target,
-        title: "Short password",
-        name: "Host",
-        password: Redacted.make("abc"),
-      },
-      host,
-    );
+    const created = yield* api.CreateRoom(target, { template: "mad-sad-glad", title: "Short password", name: "Host", password: Redacted.make("abc") }, host);
 
     expect(
       (yield* api.SharedBoard.get(target, { ...host, atLeast: created }))

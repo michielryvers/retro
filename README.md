@@ -65,16 +65,18 @@ Copy `.env.example` to `.env` for local deployment, or configure these GitHub Ac
 | `RETRO_DOMAIN` | Variable: hostname without a scheme or path |
 | `RETRO_ACCESS_ISSUER` | Variable: Cloudflare Access team URL |
 
-Production uses Alchemy’s encrypted Cloudflare state store, named `retro`. Bootstrap it once before the first CI deployment:
+Production uses Alchemy’s encrypted Cloudflare state store Worker `alchemy-state-store-retro` (the existing `retro` store). Bootstrap it once before the first CI deployment:
 
 ```sh
-bun alchemy state bootstrap --backend cloudflare --name retro --no-input
+bunx alchemy state bootstrap --backend cloudflare --name alchemy-state-store-retro --no-input
 bun run deploy --stage prod --no-input --yes
 ```
 
 The token needs Workers Scripts Write, Account Settings Read, Secrets Store Write, and Access: Apps and Policies Write on the account, plus Zone Read, DNS Write, and Workers Routes Write on the site’s zone. See [Alchemy’s CI guide](https://alchemy.run/environments/ci/) for credentials and state setup.
 
 Pushes to `main` run checks and then deploy. Pull requests run checks without deployment credentials. Production deployments run one at a time. For a fork, update the repository guard in the workflow and allow `main` in your `production` environment.
+
+The deployment check reads the deployed frontend's Worker name from stack outputs, resolves the account's `workers.dev` subdomain, and checks the app HTML, built JavaScript, and backend session endpoint. It also checks the custom domain. A confirmed Cloudflare bot challenge (`403` with `cf-mitigated: challenge`) there produces a warning, not a false deployment failure; all other errors still fail. No WAF or admin-access rules are relaxed.
 
 After a successful deployment, a separate job renders the actual app view with fixed fictional data and captures desktop/mobile screenshots. It commits changed images back to `main` using GitHub’s built-in token, without starting another workflow run. No live rooms or Cloudflare credentials are used for screenshots. The fixture and capture script live in `scripts/screenshots/`.
 
@@ -87,7 +89,7 @@ The `CommonGround` infrastructure identifiers preserve the original deployment. 
 - `packages/web`: the Foldkit interface.
 - `scripts`: integration checks against a running local app.
 
-Alchemy is pinned, with three patches in `patches/`: an internal export, Cloudflare runtime reliability/deletion hooks, and Bun’s TypeScript loader. Review these when upgrading Alchemy. The vendored anti-slop lint rules retain their upstream license and attribution in `tools/oxlint`.
+Alchemy is pinned to a published npm release; no expiring preview URLs or recovered archives are needed. Two patches in `patches/` preserve Cloudflare runtime reliability/deletion hooks and allow state/projection-focused Story tests without exhaustive event assertions. Explicit event-order tests remain exhaustive. See `patches/README.md` before upgrading Alchemy. The vendored anti-slop lint rules retain their upstream license and attribution in `tools/oxlint`.
 
 </details>
 

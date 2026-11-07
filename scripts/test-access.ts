@@ -14,7 +14,7 @@ export const joinInvited = Effect.fn(function* (
   host: { headers: { cookie: string } },
   guest: { headers: { cookie: string } },
 ) {
-  const receipt = yield* api.InviteParticipant({ target, name }, host);
+  const receipt = yield* api.InviteParticipant(target, { name }, host);
 
   const invitations = yield* api.Invitations.get(target, {
     ...host,
@@ -28,15 +28,7 @@ export const joinInvited = Effect.fn(function* (
     inviteToken(Redacted.value(invitations.seed), person.id),
   );
 
-  yield* api.JoinRoom(
-    {
-      target,
-      participantId: person.id,
-      token: Redacted.make(token),
-      password: Redacted.make(testPassword),
-    },
-    guest,
-  );
+  yield* api.JoinRoom(target, { participantId: person.id, token: Redacted.make(token), password: Redacted.make(testPassword) }, guest);
 
   return person.id;
 });

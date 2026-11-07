@@ -8,16 +8,16 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { makeRpcStub } from "@alchemy.run/cloudflare";
 
-// The pinned adapter does not publicly export this runtime service.
+// Domain beta.85 prefixes Durable Object bindings with the model name.
 export class Environment extends Context.Service<
   Environment,
   {
-    RetroRoomAggregate: DurableObjectNamespace;
-    SharedBoardView: DurableObjectNamespace;
-    MyNotesView: DurableObjectNamespace;
-    InvitationsView: DurableObjectNamespace;
-    RoomSummaryView: DurableObjectNamespace;
-    RoomRetentionPolicy: DurableObjectNamespace;
+    "CommonGround.RetroRoomAggregate": DurableObjectNamespace;
+    "CommonGround.SharedBoardView": DurableObjectNamespace;
+    "CommonGround.MyNotesView": DurableObjectNamespace;
+    "CommonGround.InvitationsView": DurableObjectNamespace;
+    "CommonGround.RoomSummaryView": DurableObjectNamespace;
+    "CommonGround.RoomRetentionPolicy": DurableObjectNamespace;
   }
 >()("Cloudflare.Workers.WorkerEnvironment") {}
 
@@ -38,7 +38,7 @@ type AdminStub = {
 
 export const administration = Effect.gen(function* () {
   const env = Option.getOrThrow(yield* Effect.serviceOption(Environment));
-  const rooms = env.RetroRoomAggregate;
+  const rooms = env["CommonGround.RetroRoomAggregate"];
   const summaries = yield* Summary;
 
   const stub = (namespace: DurableObjectNamespace, name: string) =>
@@ -98,20 +98,20 @@ export const administration = Effect.gen(function* () {
         actorId ? { actorId, title } : undefined,
       );
 
-      yield* stub(env.SharedBoardView, id).purge();
-      yield* stub(env.InvitationsView, id).purge();
-      yield* stub(env.InvitationsView, id).finishPurge();
+      yield* stub(env["CommonGround.SharedBoardView"], id).purge();
+      yield* stub(env["CommonGround.InvitationsView"], id).purge();
+      yield* stub(env["CommonGround.InvitationsView"], id).finishPurge();
 
       for (const actor of manifest.participants ?? []) {
-        yield* stub(env.MyNotesView, `${id}:${actor}`).purge();
-        yield* stub(env.MyNotesView, `${id}:${actor}`).finishPurge();
+        yield* stub(env["CommonGround.MyNotesView"], `${id}:${actor}`).purge();
+        yield* stub(env["CommonGround.MyNotesView"], `${id}:${actor}`).finishPurge();
       }
 
-      yield* stub(env.SharedBoardView, id).finishPurge();
-      yield* stub(env.RoomSummaryView, id).purge();
-      yield* stub(env.RoomSummaryView, id).finishPurge();
-      yield* stub(env.RoomRetentionPolicy, id).purge();
-      yield* stub(env.RoomRetentionPolicy, id).finishPurge();
+      yield* stub(env["CommonGround.SharedBoardView"], id).finishPurge();
+      yield* stub(env["CommonGround.RoomSummaryView"], id).purge();
+      yield* stub(env["CommonGround.RoomSummaryView"], id).finishPurge();
+      yield* stub(env["CommonGround.RoomRetentionPolicy"], id).purge();
+      yield* stub(env["CommonGround.RoomRetentionPolicy"], id).finishPurge();
       yield* room.finishPurge();
       yield* directory.forgetRoom(id);
 

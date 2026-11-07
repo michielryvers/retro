@@ -14,6 +14,16 @@ export const AccessPayload = Schema.Struct({
   participantId: Schema.optionalKey(Schema.String),
 });
 
+// Alchemy beta.85 separates a command's routing target from its input.
+export const AccessCommandPayload = Schema.Struct({
+  target: RoomId,
+  input: Schema.Struct({
+    password: Schema.Redacted(Schema.String),
+    token: Schema.optionalKey(Schema.Redacted(Schema.String)),
+    participantId: Schema.optionalKey(Schema.String),
+  }),
+});
+
 export const prepareAccess = Effect.fn(function* (
   tag: string,
   input: typeof AccessPayload.Type | null,

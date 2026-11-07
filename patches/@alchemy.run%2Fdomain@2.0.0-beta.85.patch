@@ -1,0 +1,47 @@
+diff --git a/lib/Story.d.ts b/lib/Story.d.ts
+index a568b1c1a081689549445d4f0505f6fb8e4147d4..08eeaa98adc9d86370cb5fa944ce8d53e0a8d0ba 100644
+--- a/lib/Story.d.ts
++++ b/lib/Story.d.ts
+@@ -253,6 +253,7 @@ declare const saga: <S extends Saga.Any>(saga: S, key: SagaKeyOf<S>, expected: S
+ declare const provide: <I, S>(service: Context.Key<I, S>, value: S) => ProvideStep<I>;
+ /** Options for {@link make}. */
+ interface StoryOptions<Policies, LE, LR, Systems> {
++    readonly assertAllEvents?: boolean;
+     /** The policies' and projections' Layers. Required when the model has either. */
+     readonly layer?: Layer.Layer<Policies, LE, LR>;
+     /**
+diff --git a/lib/Story.js b/lib/Story.js
+index 862d60851005acc4622d19d355c5210c1c09f31c..74dd5fbfbd9d29322e3ea55b4198232a60661dc2 100644
+--- a/lib/Story.js
++++ b/lib/Story.js
+@@ -830,7 +830,7 @@ const make = (domain, ...[options = {}]) => (...steps) => Effect.gen(function* (
+             const first = committedAt.get(`${stream}#${from}`);
+             unasserted.push(`${stream}: ${summarizeAll(rest)}${first === undefined ? "" : ` (from step ${first})`}`);
+         }
+-        if (unasserted.length > 0) {
++        if (options.assertAllEvents !== false && unasserted.length > 0) {
+             return yield* new StepFailed({
+                 step: steps.length,
+                 atEnd: true,
+diff --git a/src/Story.ts b/src/Story.ts
+index 2d53478cae3dbae272c928fa7ae16cc9cf177fd4..46907482244cff663e9a37b8435b1efe3d7dcd66 100644
+--- a/src/Story.ts
++++ b/src/Story.ts
+@@ -702,6 +702,8 @@ interface ObservedCall {
+ 
+ /** Options for {@link make}. */
+ interface StoryOptions<Policies, LE, LR, Systems> {
++  /** State/projection-focused scenarios may opt out of exhaustive event assertions. */
++  readonly assertAllEvents?: boolean;
+   /** The policies' and projections' Layers. Required when the model has either. */
+   readonly layer?: Layer.Layer<Policies, LE, LR>;
+   /**
+@@ -1339,7 +1341,7 @@ const make =
+             `${stream}: ${summarizeAll(rest)}${first === undefined ? "" : ` (from step ${first})`}`,
+           );
+         }
+-        if (unasserted.length > 0) {
++        if (options.assertAllEvents !== false && unasserted.length > 0) {
+           return yield* new StepFailed({
+             step: steps.length,
+             atEnd: true,

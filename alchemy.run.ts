@@ -12,7 +12,7 @@ export default Alchemy.Stack(
     state: Layer.unwrap(
       Effect.map(Alchemy.Stage, (stage) =>
         stage === "prod"
-          ? Cloudflare.state({ name: "retro" })
+          ? Cloudflare.state({ workerName: "alchemy-state-store-retro" })
           : Alchemy.localState(),
       ),
     ),
@@ -70,6 +70,6 @@ export default Alchemy.Stack(
       dev: { host: "127.0.0.1", port: 5187, strictPort: true },
     });
 
-    return { url: app.url.as<string>(), api: backend.url.as<string>() };
+    return { url: app.url.as<string>(), api: backend.url.as<string>(), workerName: app.workerName };
   }),
 );

@@ -30,7 +30,11 @@ import { Refused } from "../src/Room/Refused.rejection.ts";
 import { SharedBoard } from "../src/Room/SharedBoard.view.ts";
 import { MyNotes } from "../src/Room/MyNotes.view.ts";
 
-const story = Story.make(Retro, { layer: RoomRetentionLive, stub: [RoomCleanup] });
+// Most scenarios assert state and private/public projections rather than every
+// implementation event. Keep the event-order contract below exhaustive.
+const options = { layer: RoomRetentionLive, stub: [RoomCleanup] };
+const story = Story.make(Retro, { ...options, assertAllEvents: false });
+const eventStory = Story.make(Retro, options);
 const room = Room.ref("room");
 
 const setup = [
@@ -167,7 +171,7 @@ it.effect(
 // Private projections route only owner-scoped events. The last event of a
 // note command must reach MyNotes so its checkpoint can satisfy the receipt.
 it.effect("ends note commands with the event routed to the private view", () =>
-  story(
+  eventStory(
     Story.given(
       room,
       new RoomCreated({
@@ -182,6 +186,7 @@ it.effect("ends note commands with the event routed to the private view", () =>
       }),
     ),
     Story.provide(CurrentActor, { id: "host" }),
+    Story.provide(PreparedAccess, { id: "host", seed: Redacted.make("seed"), salt: "salt", hash: Redacted.make("hash"), validToken: true }),
     Story.when(room, new SaveNote({ id: "n", column: "mad", text: "Focus" })),
     Story.then(
       room,

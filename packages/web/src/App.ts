@@ -236,19 +236,8 @@ export const Enter = Command.define("EnterRoom", {
       const target = RoomId.make(roomId || crypto.randomUUID());
 
       const receipt = roomId
-        ? yield* api.JoinRoom({
-            target,
-            participantId,
-            token: Redacted.make(token),
-            password: Redacted.make(password),
-          })
-        : yield* api.CreateRoom({
-            target,
-            title,
-            name,
-            template,
-            password: Redacted.make(password),
-          });
+        ? yield* api.JoinRoom(target, { participantId, token: Redacted.make(token), password: Redacted.make(password) })
+        : yield* api.CreateRoom(target, { title, name, template, password: Redacted.make(password) });
 
       if (
         roomId &&
@@ -383,13 +372,13 @@ const Facilitate = Command.define("Facilitate", {
       const receipt = yield* Effect.gen(function* () {
         switch (action) {
           case "handover":
-            return yield* api.Handover({ target, participantId: value });
+            return yield* api.Handover(target, { participantId: value });
           case "split":
-            return yield* api.SplitNote({ target, noteId: value });
+            return yield* api.SplitNote(target, { noteId: value });
           case "undo":
-            return yield* api.UndoCombine({ target });
+            return yield* api.UndoCombine(target);
           default:
-            return yield* api.SetTimer({ target, operation: action, seconds });
+            return yield* api.SetTimer(target, { operation: action, seconds });
         }
       });
 
@@ -427,7 +416,7 @@ const Combine = Command.define("CombineRoomNotes", {
     Effect.gen(function* () {
       const api = yield* RetroApi.Client;
       const target = RoomId.make(roomId);
-      const receipt = yield* api.CombineNotes({ target, sourceId, targetId });
+      const receipt = yield* api.CombineNotes(target, { sourceId, targetId });
       const board = yield* api.SharedBoard.get(target, { atLeast: receipt });
 
       return board
@@ -473,34 +462,32 @@ export const Mutate = Command.define("RoomCommand", {
 
       switch (a.op) {
         case "save":
-          yield* api.SaveNote({
-            ...base,
+          yield* api.SaveNote(base.target, {
             id: a.id || crypto.randomUUID(),
             column: a.column,
             text: a.text,
-          });
+          }, { commandId: base.commandId });
           break;
         case "delete":
-          yield* api.DeleteNote({ ...base, id: a.id });
+          yield* api.DeleteNote(base.target, { id: a.id }, { commandId: base.commandId });
           break;
         case "ready":
-          yield* api.SetReady({ ...base, ready: a.selected });
+          yield* api.SetReady(base.target, { ready: a.selected }, { commandId: base.commandId });
           break;
         case "reveal":
-          yield* api.RevealNotes(base);
+          yield* api.RevealNotes(base.target, {}, { commandId: base.commandId });
           break;
         case "startVote":
-          yield* api.StartVoting(base);
+          yield* api.StartVoting(base.target, {}, { commandId: base.commandId });
           break;
         case "votingDone":
-          yield* api.SetVotingDone({ ...base, done: a.selected });
+          yield* api.SetVotingDone(base.target, { done: a.selected }, { commandId: base.commandId });
           break;
         case "vote": {
-          const receipt = yield* api.SetVote({
-            ...base,
+          const receipt = yield* api.SetVote(base.target, {
             noteId: a.id,
             selected: a.selected,
-          });
+          }, { commandId: base.commandId });
 
           const state = yield* api.MyNotes.get(
             RoomId.make(`${a.roomId}:${a.actorId}`),
@@ -511,27 +498,26 @@ export const Mutate = Command.define("RoomCommand", {
         }
 
         case "finishVote":
-          yield* api.FinishVoting(base);
+          yield* api.FinishVoting(base.target, {}, { commandId: base.commandId });
           break;
         case "action":
-          yield* api.SaveAction({
-            ...base,
+          yield* api.SaveAction(base.target, {
             id: a.id || crypto.randomUUID(),
             noteId: a.noteId,
             text: a.text,
             ownerId: a.ownerId,
             dueDate: a.dueDate,
-          });
+          }, { commandId: base.commandId });
           break;
         case "deleteAction":
-          yield* api.DeleteAction({ ...base, id: a.id });
+          yield* api.DeleteAction(base.target, { id: a.id }, { commandId: base.commandId });
           break;
         case "archive":
         case "restore":
-          yield* api.ArchiveRoom({ ...base, archived: a.op === "archive" });
+          yield* api.ArchiveRoom(base.target, { archived: a.op === "archive" }, { commandId: base.commandId });
           break;
         case "close":
-          yield* api.CloseRoom(base);
+          yield* api.CloseRoom(base.target, {}, { commandId: base.commandId });
           break;
       }
 
@@ -623,7 +609,7 @@ const LoadInvitations = Command.define("LoadInvitations", {
       const target = RoomId.make(roomId);
 
       const receipt = name
-        ? yield* api.InviteParticipant({ target, name })
+        ? yield* api.InviteParticipant(target, { name })
         : undefined;
 
       const invitations = yield* api.Invitations.get(
@@ -1659,7 +1645,7 @@ export const subscriptions = Subscription.make<Model, Message, Services>()(
                   return api.SharedBoard.watch(RoomId.make(roomId));
                 }),
               ).pipe(
-                Stream.map((board) => Message.Board({ board })),
+                Stream.map(({ state: board }) => Message.Board({ board })),
                 Stream.catchCause((e) =>
                   Stream.succeed(
                     Cause.pretty(e).includes("permanently deleted")
@@ -1696,7 +1682,7 @@ export const subscriptions = Subscription.make<Model, Message, Services>()(
                   return api.MyNotes.watch(RoomId.make(`${roomId}:${actorId}`));
                 }),
               ).pipe(
-                Stream.map((state) => Message.Private({ state })),
+                Stream.map(({ state }) => Message.Private({ state })),
                 Stream.catchCause((e) =>
                   Stream.succeed(
                     Cause.pretty(e).includes("permanently deleted")

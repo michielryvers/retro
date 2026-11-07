@@ -24,8 +24,8 @@ import { RetroApi } from "@retro/domain/RetroApi.api";
 import { SessionLive, sessionRoute, cookieToken, identity } from "./Session.ts";
 
 const Live = SessionLive.pipe(
-  Layer.provideMerge(Retro.layer(RoomRetentionLive.pipe(Layer.provide(RoomCleanupLive)))),
-  Layer.provide(DomainCloudflare.durableObjectsWith(roomMaintenance)),
+  Layer.provideMerge(Retro.layer(RoomRetentionLive.pipe(Layer.provide(RoomCleanupLive)), { legacyData: true })),
+  Layer.provide(DomainCloudflare.layerDurableObjects({ extend: roomMaintenance })),
 );
 
 export default class RetroWorker extends Cloudflare.Worker<RetroWorker>()(

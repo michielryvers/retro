@@ -33,16 +33,7 @@ await Effect.runPromise(
   Effect.gen(function* () {
     const api = yield* RetroApi.client;
 
-    yield* api.CreateRoom(
-      {
-        template: "mad-sad-glad",
-        password: Redacted.make(testPassword),
-        target: room,
-        title: "WebSocket idle verification",
-        name: "QA",
-      },
-      { headers },
-    );
+    yield* api.CreateRoom(room, { template: "mad-sad-glad", password: Redacted.make(testPassword), title: "WebSocket idle verification", name: "QA" }, { headers });
     const socket = new WebSocket(address, { headers });
 
     socket.addEventListener("message", (event) =>
@@ -60,7 +51,7 @@ await Effect.runPromise(
       console.log("Holding the live connection idle for 25 seconds");
       yield* Effect.sleep("25 seconds");
       assert.equal(socket.readyState, WebSocket.OPEN);
-      yield* api.SetReady({ target: room, ready: true }, { headers });
+      yield* api.SetReady(room, { ready: true }, { headers });
 
       for (
         let attempt = 0;
