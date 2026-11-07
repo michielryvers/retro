@@ -13,6 +13,8 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import { RetroApi } from "../packages/domain/src/RetroApi.api.ts";
 import { RoomId } from "../packages/domain/src/Room/Room.id.ts";
+import { SHARED_INVITATION } from "../packages/domain/src/Room/SharedInvitation.ts";
+import { inviteToken } from "../packages/server/src/Secrets.ts";
 
 const origin = process.argv[2] ?? "http://localhost:5187";
 const room = RoomId.make(crypto.randomUUID());
@@ -36,6 +38,15 @@ await Effect.runPromise(
     yield* api.CreateRoom(room, { password: Redacted.make(testPassword), title, name: "QA host", template: "keep-drop-try" }, host);
     guest.id = yield* joinInvited(api, room, "QA guest", host, guest);
     host.id = (yield* api.SharedBoard.get(room, host))!.adminId;
+    const invitations = (yield* api.Invitations.get(room, host))!;
+
+    const sharedCredentials = {
+      name: "New participant",
+      token: Redacted.make(yield* Effect.promise(() => inviteToken(Redacted.value(invitations.seed), SHARED_INVITATION))),
+      password: Redacted.make(testPassword),
+    };
+
+    const newcomer = yield* Effect.promise(session);
 
     const receipt = yield* api.SaveNote(room, { id: "private", column: "keep", text: "Private deletion fixture" }, guest);
 
@@ -80,6 +91,7 @@ await Effect.runPromise(
     assert.equal(denied._tag, "Refused");
 
     const archived = yield* api.ArchiveRoom(room, { archived: true }, host);
+    assert.equal((yield* api.JoinSharedRoom(room, sharedCredentials, newcomer).pipe(Effect.flip))._tag, "Refused");
 
     assert.equal(
       (yield* api.SharedBoard.get(room, { ...guest, atLeast: archived }))
@@ -115,6 +127,7 @@ await Effect.runPromise(
     // Every public route must remain unusable, even to an existing participant.
     const blockedCalls: Effect.Effect<unknown, unknown>[] = [
       api.JoinRoom(room, { participantId: guest.id, token: Redacted.make("0".repeat(64)), password: Redacted.make(testPassword) }, guest),
+      api.JoinSharedRoom(room, sharedCredentials, newcomer),
       api.CreateRoom(room, { template: "mad-sad-glad", password: Redacted.make(testPassword), title, name: "reuse" }, host),
       api.SharedBoard.get(room, host),
       api.MyNotes.get(RoomId.make(`${room}:${guest.id}`), guest),

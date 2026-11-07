@@ -19,6 +19,8 @@ import {
   ParticipantJoined,
 } from "./JoinRoom.command.ts";
 import { grantParticipant, sameSecret } from "./Access.ts";
+import { JoinSharedRoom } from "./JoinSharedRoom.command.ts";
+import { SHARED_ATTEMPTS } from "./SharedInvitation.ts";
 import { SetTimer, TimerChanged } from "./SetTimer.command.ts";
 import { Handover, FacilitatorChanged } from "./Handover.command.ts";
 import { UndoCombine } from "./UndoCombine.command.ts";
@@ -149,6 +151,7 @@ export class Room extends Domain.Aggregate("RetroRoom", {
     CombineNotes,
     CreateRoom,
     JoinRoom,
+    JoinSharedRoom,
     SaveNote,
     DeleteNote,
     SetReady,
@@ -337,6 +340,60 @@ export class Room extends Domain.Aggregate("RetroRoom", {
           name: c.name.trim(),
         }),
       ];
+    }),
+    JoinSharedRoom: Effect.fn(function* (s, c, context) {
+      const actor = yield* CurrentActor;
+      const prepared = yield* PreparedAccess;
+
+      if (
+        s.lifecycle !== "created" || !prepared.validToken || !prepared.id ||
+        Redacted.value(c.token).length !== 64 ||
+        !sameSecret(Redacted.value(prepared.seed), Redacted.value(s.inviteSeed))
+      ) return yield* refuse("The invitation or password is incorrect.");
+
+      // Retrying/concurrent joins from the same browser must never create a
+      // second identity, even if its name changes or the room has since closed.
+      if (grantParticipant(s.grants, actor.id)) return [];
+
+      if (s.phase === "closed" || s.archived)
+        return yield* refuse("This retrospective has finished. New participants cannot join.");
+
+      if (!validText(c.name, 40))
+        return yield* refuse("Use a name between 1 and 40 characters.");
+
+      const now = DateTime.toEpochMillis(context.now);
+
+      const previous = s.attempts.find((attempt) =>
+        attempt.participantId === SHARED_ATTEMPTS && now - attempt.windowStart < 15 * 60 * 1000,
+      );
+
+      if (previous && previous.count >= 5)
+        return yield* refuse("Too many attempts. Try again in 15 minutes.");
+
+      if (!sameSecret(Redacted.value(prepared.hash), Redacted.value(s.passwordHash)))
+        return [new JoinAttempted({
+          participantId: SHARED_ATTEMPTS,
+          count: (previous?.count ?? 0) + 1,
+          windowStart: previous?.windowStart ?? now,
+        })];
+
+      if (s.invitations.length >= 30)
+        return yield* refuse("This room has reached its 30-person limit.");
+
+      if (s.grants.length >= 300)
+        return yield* refuse("This room has reached its device limit.");
+
+      const person = { id: prepared.id, name: c.name.trim() };
+      yield* capacity(s, {
+        ...s,
+        invitations: [...s.invitations, person],
+        participants: [...s.participants, { ...person, ready: false }],
+        grants: [...s.grants, { participantId: person.id, sessionId: actor.id }],
+      });
+
+      // All three events commit together in the room's serialized decision.
+      return [new ParticipantInvited(person), new ParticipantJoined(person),
+        new SessionGranted({ participantId: person.id, sessionId: actor.id })];
     }),
     JoinRoom: Effect.fn(function* (s, c, context) {
       const a = yield* CurrentActor;
@@ -591,6 +648,9 @@ export class Room extends Domain.Aggregate("RetroRoom", {
     }),
   },
   reply: {
+    JoinSharedRoom: (_s, events) => ({
+      joined: !events.some((e) => Predicate.isTagged(e, "JoinAttempted")),
+    }),
     JoinRoom: (_s, events) => ({
       joined: !events.some((e) => Predicate.isTagged(e, "JoinAttempted")),
     }),

@@ -1,5 +1,6 @@
 import * as Redacted from "effect/Redacted";
 import { inviteToken } from "./inviteToken.ts";
+import { SHARED_INVITATION } from "@retro/domain/Room/SharedInvitation";
 import * as Cause from "effect/Cause";
 import { grantParticipant } from "@retro/domain/Room/Access";
 import { flow } from "effect/Function";
@@ -54,7 +55,6 @@ const ToolAction = Schema.Literals([
 
 const Field = Schema.Literals([
   "password",
-  "inviteName",
   "handoverTo",
   "deleteTitle",
   "name",
@@ -89,7 +89,6 @@ export const Model = Schema.Struct({
   unavailable: Schema.Boolean,
   inviteLoading: Schema.Boolean,
   inviteError: Schema.String,
-  inviteName: Schema.String,
   inviteLinks: Schema.Array(InviteLink),
   actorId: Schema.String,
   roomId: Schema.String,
@@ -198,7 +197,6 @@ export const Message = defineMessageUnion({
   VoteSort: { order: Schema.Literals(["highest", "lowest", "original"]) },
   Confirm: { op: Schema.String },
   Invite: {},
-  AddInvite: {},
   InvitesLoaded: { links: Schema.Array(InviteLink) },
   Copy: { url: Schema.String },
   Notify: { text: Schema.String },
@@ -245,7 +243,9 @@ export const Enter = Command.define("EnterRoom", {
       const target = RoomId.make(roomId || crypto.randomUUID());
 
       const receipt = roomId
-        ? yield* api.JoinRoom(target, { participantId, token: Redacted.make(token), password: Redacted.make(password) })
+        ? participantId === SHARED_INVITATION
+          ? yield* api.JoinSharedRoom(target, { name, token: Redacted.make(token), password: Redacted.make(password) })
+          : yield* api.JoinRoom(target, { participantId, token: Redacted.make(token), password: Redacted.make(password) })
         : yield* api.CreateRoom(target, { title, name, template, password: Redacted.make(password) });
 
       if (
@@ -282,7 +282,7 @@ export const Enter = Command.define("EnterRoom", {
       const links = invitations
         ? yield* Effect.promise(() =>
             Promise.all(
-              invitations.people.map(async (p) => ({
+              [{ id: SHARED_INVITATION, name: "Everyone" }, ...invitations.people].map(async (p) => ({
                 ...p,
                 url: `${location.origin}/room/${target}#invite=${p.id}.${await inviteToken(Redacted.value(invitations.seed), p.id)}`,
               })),
@@ -306,7 +306,7 @@ export const Enter = Command.define("EnterRoom", {
                   : explain(Cause.squash(cause)).includes("Too many attempts")
                     ? "Too many attempts. Try again in 15 minutes."
                     : roomId
-                      ? "Could not join. Check your personal link and room password, then try again."
+                      ? explain(Cause.squash(cause))
                       : "Could not create the room. Please try again.",
               }),
         ),
@@ -627,28 +627,21 @@ const FocusAction = Command.define("FocusAction", {
 });
 
 const LoadInvitations = Command.define("LoadInvitations", {
-  args: { roomId: Schema.String, name: Schema.String },
+  args: { roomId: Schema.String },
   messages: [Message.InvitesLoaded, Message.InvitesFailed],
-  execute: ({ roomId, name }) =>
+  execute: ({ roomId }) =>
     Effect.gen(function* () {
       const api = yield* RetroApi.Client;
       const target = RoomId.make(roomId);
 
-      const receipt = name
-        ? yield* api.InviteParticipant(target, { name })
-        : undefined;
-
-      const invitations = yield* api.Invitations.get(
-        target,
-        receipt ? { atLeast: receipt } : undefined,
-      ).pipe(Effect.timeout("8 seconds"));
+      const invitations = yield* api.Invitations.get(target).pipe(Effect.timeout("8 seconds"));
 
       if (!invitations)
         return Message.InvitesFailed({ reason: "Could not load invitations." });
 
       const links = yield* Effect.promise(() =>
         Promise.all(
-          invitations.people.map(async (p) => ({
+          [{ id: SHARED_INVITATION, name: "Everyone" }, ...invitations.people].map(async (p) => ({
             ...p,
             url: `${location.origin}/room/${roomId}#invite=${p.id}.${await inviteToken(Redacted.value(invitations.seed), p.id)}`,
           })),
@@ -770,7 +763,6 @@ export const init = (
     unavailable: false,
     inviteLoading: false,
     inviteError: "",
-    inviteName: "",
     inviteLinks: [],
     toolsOpen: false,
     mobileMenu: false,
@@ -818,8 +810,8 @@ export const init = (
   },
   commands: f.roomId
     ? [
-        Resume({ roomId: f.roomId, invitation: Boolean(f.inviteToken) }),
-        ...(f.inviteToken && f.participantId
+        Resume({ roomId: f.roomId, invitation: Boolean(f.inviteToken) && f.participantId !== SHARED_INVITATION }),
+        ...(f.inviteToken && f.participantId && f.participantId !== SHARED_INVITATION
           ? [
               LoadPreview({
                 roomId: f.roomId,
@@ -896,7 +888,7 @@ export const update = (
       }),
       RetryInvites: () => ({
         model: { ...m, inviteLoading: true, inviteError: "" },
-        commands: [LoadInvitations({ roomId: m.roomId, name: "" })],
+        commands: [LoadInvitations({ roomId: m.roomId })],
       }),
       CloseRoom: (): Update.Return<Model, Message, Services> => ({
         model: { ...m, mobileMenu: false, invite: false, toolsOpen: false },
@@ -911,7 +903,7 @@ export const update = (
         },
         commands:
           m.board?.adminId === m.actorId
-            ? [LoadInvitations({ roomId: m.roomId, name: "" })]
+            ? [LoadInvitations({ roomId: m.roomId })]
             : [],
       }),
       RoomSection: (msg): Update.Return<Model, Message, Services> => ({
@@ -924,7 +916,7 @@ export const update = (
         },
         commands:
           msg.section === "people" && m.board?.adminId === m.actorId
-            ? [LoadInvitations({ roomId: m.roomId, name: "" })]
+            ? [LoadInvitations({ roomId: m.roomId })]
             : [],
       }),
       ConfigureVotes: (msg): Update.Return<Model, Message, Services> => {
@@ -1484,13 +1476,7 @@ export const update = (
         commands:
           m.invite || m.board?.adminId !== m.actorId
             ? []
-            : [LoadInvitations({ roomId: m.roomId, name: "" })],
-      }),
-      AddInvite: () => ({
-        model: { ...m, busy: true, error: "" },
-        commands: [
-          LoadInvitations({ roomId: m.roomId, name: m.inviteName.trim() }),
-        ],
+            : [LoadInvitations({ roomId: m.roomId })],
       }),
       InvitesLoaded: (msg) => ({
         model: {
@@ -1498,7 +1484,6 @@ export const update = (
           inviteLinks: msg.links,
           inviteLoading: false,
           inviteError: "",
-          inviteName: "",
           busy: false,
         },
       }),
@@ -2012,7 +1997,7 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                     ? h.p(
                         [h.Class("subtle")],
                         [
-                          "Ask your facilitator for your personal invitation link.",
+                          "Ask your facilitator for the room invitation link.",
                         ],
                       )
                     : null,
@@ -2081,7 +2066,7 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                         ],
                       )
                     : null,
-                  !m.roomId
+                  !m.roomId || m.participantId === SHARED_INVITATION
                     ? field("name", "Your name", m.name, "e.g. Alex")
                     : null,
                   !m.roomId || m.inviteToken
@@ -2111,7 +2096,7 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                                 !m.title.trim() ||
                                 m.password.length < 3)) ||
                             (Boolean(m.roomId) &&
-                              (!m.inviteToken || !m.password)),
+                              (!m.inviteToken || !m.password || (m.participantId === SHARED_INVITATION && !m.name.trim()))),
                           toView: (a) =>
                             h.button(
                               [
@@ -2877,33 +2862,22 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                         h.p(
                           [h.Class("subtle")],
                           [
-                            "Each person gets their own link. Share the room password separately.",
+                            "Share the room link with everyone. Each person enters their own name. Share the room password separately. Reopening this room in the same browser keeps your identity and private notes.",
                           ],
                         ),
-                        h.form(
-                          [
-                            h.Class("invitation-form"),
-                            h.OnSubmit(Message.AddInvite()),
+                        ...m.inviteLinks.filter((p) => p.id === SHARED_INVITATION).map((p) => h.div(
+                          [h.Class("invitation-row")], [
+                            h.strong([], ["Room invitation link"]),
+                            Input.view({ id: "shared-invite", value: p.url, isReadOnly: true,
+                              toView: (a) => h.input([...a.input, h.AriaLabel("Room invitation link")]),
+                            }, h),
+                            button("Copy room link", Message.Copy({ url: p.url }), "primary", b.phase === "closed", "copy"),
                           ],
-                          [
-                            field(
-                              "inviteName",
-                              "Participant name",
-                              m.inviteName,
-                              "e.g. Sam",
-                            ),
-                            button(
-                              "Add participant",
-                              Message.AddInvite(),
-                              "primary",
-                              !m.inviteName.trim() ||
-                                m.busy ||
-                                b.phase === "closed",
-                              "user-plus",
-                            ),
-                          ],
-                        ),
-                        ...m.inviteLinks.map((p) =>
+                        )),
+                        h.details([], [
+                          h.summary([], ["Personal recovery links"]),
+                          h.p([h.Class("subtle")], ["For an existing person joining from another browser, share only their own personal link. It restores their identity and private notes; the facilitator’s link also restores facilitator access. Entering the same name through the room link creates a different person."]),
+                        ...m.inviteLinks.filter((p) => p.id !== SHARED_INVITATION).map((p) =>
                           h.div(
                             [h.Class("invitation-row"), h.Key(p.id)],
                             [
@@ -2956,6 +2930,7 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                             ],
                           ),
                         ),
+                        ]),
                       ],
                     )
                   : null,
