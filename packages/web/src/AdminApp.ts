@@ -1,4 +1,13 @@
-import { RoomSummaries as Rooms, DeleteResponse } from "@retro/domain/HttpContracts";
+import {
+  ARCHIVE_MAX_BYTES,
+  RetroArchive,
+  decodeArchive,
+} from "@retro/domain/RetroArchive";
+import { combinedNotes } from "@retro/domain/Room/Combination";
+import {
+  RoomSummaries as Rooms,
+  DeleteResponse,
+} from "@retro/domain/HttpContracts";
 import * as Match from "effect/Match";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -9,6 +18,9 @@ import { Button, Input } from "@foldkit/ui";
 import { templates } from "@retro/domain/Room/Templates";
 
 const Model = Schema.Struct({
+  transferBusy: Schema.Boolean,
+  preview: Schema.NullOr(RetroArchive),
+  importPreview: Schema.Boolean,
   rooms: Rooms,
   pending: Rooms,
   bulkTotal: Schema.Int,
@@ -25,6 +37,14 @@ const Model = Schema.Struct({
 type Model = typeof Model.Type;
 
 export const Message = defineMessageUnion({
+  PickArchive: {},
+  Preview: { archive: RetroArchive, importing: Schema.Boolean },
+  DismissPreview: {},
+  ImportArchive: {},
+  Imported: { id: Schema.String },
+  ExportArchive: { id: Schema.String },
+  InspectArchive: { id: Schema.String },
+  TransferDone: { notice: Schema.String },
   Loaded: { rooms: Rooms },
   Failed: { error: Schema.String },
   Refresh: {},
@@ -91,18 +111,185 @@ const Delete = Command.define("DeleteAdminRoom", {
     ),
 });
 
+const transferError = (cause: unknown) => {
+  const error = cause instanceof Error && cause.cause instanceof Error ? cause.cause : cause;
+
+  return Message.Failed({ error: error instanceof Error ? error.message : "Transfer failed. Please try again." });
+};
+
+const readArchive = async (id: string) => {
+  const response = await fetch(
+    `/admin/api/export?id=${encodeURIComponent(id)}`,
+    { cache: "no-store" },
+  );
+
+  if (!response.ok)
+    throw new Error(
+      "Couldn’t read this finished retro. Refresh and try again.",
+    );
+
+  return decodeArchive(await response.json());
+};
+
+const PickArchive = Command.define("PickRetroArchive", {
+  messages: [Message.Preview, Message.TransferDone, Message.Failed],
+  execute: Effect.tryPromise(async () => {
+    const file = await new Promise<File | undefined>((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".json,application/json";
+      input.addEventListener("change", () => resolve(input.files?.[0]), {
+        once: true,
+      });
+      input.addEventListener("cancel", () => resolve(undefined), {
+        once: true,
+      });
+      input.click();
+    });
+
+    if (!file) return Message.TransferDone({ notice: "" });
+
+    if (file.size > ARCHIVE_MAX_BYTES)
+      throw new Error("This archive is too large (maximum 1.8 MB).");
+
+    try {
+      return Message.Preview({
+        archive: decodeArchive(JSON.parse(await file.text())),
+        importing: true,
+      });
+    } catch {
+      throw new Error(
+        "Choose a version 1 retro JSON export from administration. Markdown summaries cannot be imported.",
+      );
+    }
+  }).pipe(Effect.catch((error) => Effect.succeed(transferError(error)))),
+});
+
+const ExportArchive = Command.define("ExportRetroArchive", {
+  args: { id: Schema.String },
+  messages: [Message.TransferDone, Message.Failed],
+  execute: ({ id }) =>
+    Effect.tryPromise(async () => {
+      const archive = await readArchive(id);
+
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(archive)], { type: "application/json" }),
+      );
+
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `retro-${id}.json`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      return Message.TransferDone({ notice: "JSON export downloaded." });
+    }).pipe(Effect.catch((error) => Effect.succeed(transferError(error)))),
+});
+
+const InspectArchive = Command.define("InspectRetroArchive", {
+  args: { id: Schema.String },
+  messages: [Message.Preview, Message.Failed],
+  execute: ({ id }) =>
+    Effect.tryPromise(async () =>
+      Message.Preview({ archive: await readArchive(id), importing: false }),
+    ).pipe(Effect.catch((error) => Effect.succeed(transferError(error)))),
+});
+
+const ImportArchive = Command.define("ImportRetroArchive", {
+  args: { archive: RetroArchive },
+  messages: [Message.Imported, Message.Failed],
+  execute: ({ archive }) =>
+    Effect.tryPromise(async () => {
+      const response = await fetch("/admin/api/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(archive),
+      });
+
+      if (!response.ok)
+        throw new Error(
+          "Import could not finish. You can safely retry this file.",
+        );
+
+      const result = Schema.decodeUnknownSync(
+        Schema.Struct({ id: Schema.String }),
+      )(await response.json());
+
+      return Message.Imported(result);
+    }).pipe(Effect.catch((error) => Effect.succeed(transferError(error)))),
+});
+
 export const update = (
   m: Model,
   msg: Message,
 ): Update.Return<Model, Message> => {
   return Match.value(msg).pipe(
     Match.tagsExhaustive({
+      PickArchive: (): Update.Return<Model, Message> =>
+        m.transferBusy || m.deleting || m.loading
+          ? { model: m }
+          : {
+              model: { ...m, transferBusy: true, error: "", notice: "", selected: "", confirmation: "" },
+              commands: [PickArchive()],
+            },
+      Preview: (msg): Update.Return<Model, Message> => ({
+        model: {
+          ...m,
+          transferBusy: false,
+          preview: msg.archive,
+          importPreview: msg.importing,
+          error: "",
+        },
+      }),
+      DismissPreview: (): Update.Return<Model, Message> =>
+        m.transferBusy ? { model: m } : { model: { ...m, preview: null } },
+      ImportArchive: (): Update.Return<Model, Message> =>
+        !m.preview || !m.importPreview || m.transferBusy || m.deleting
+          ? { model: m }
+          : {
+              model: { ...m, transferBusy: true, error: "" },
+              commands: [ImportArchive({ archive: m.preview })],
+            },
+      Imported: (): Update.Return<Model, Message> => ({
+        model: {
+          ...m,
+          transferBusy: false,
+          preview: null,
+          loading: true,
+          notice:
+            "Historical retro saved. Repeated uploads of the same content create no duplicates.",
+        },
+        commands: [Load()],
+      }),
+      ExportArchive: (msg): Update.Return<Model, Message> =>
+        m.transferBusy || m.deleting
+          ? { model: m }
+          : {
+              model: { ...m, transferBusy: true, error: "" },
+              commands: [ExportArchive({ id: msg.id })],
+            },
+      InspectArchive: (msg): Update.Return<Model, Message> =>
+        m.transferBusy || m.deleting
+          ? { model: m }
+          : {
+              model: { ...m, transferBusy: true, error: "" },
+              commands: [InspectArchive({ id: msg.id })],
+            },
+      TransferDone: (msg): Update.Return<Model, Message> => ({
+        model: { ...m, transferBusy: false, notice: msg.notice },
+      }),
       Loaded: (msg): Update.Return<Model, Message> => {
         return { model: { ...m, rooms: msg.rooms, loading: false, error: "" } };
       },
       Failed: (msg): Update.Return<Model, Message> => {
         return {
-          model: { ...m, loading: false, deleting: false, error: msg.error },
+          model: {
+            ...m,
+            loading: false,
+            deleting: false,
+            transferBusy: false,
+            error: msg.error,
+          },
         };
       },
       Refresh: (): Update.Return<Model, Message> => {
@@ -220,7 +407,7 @@ const view = (m: Model, h: HtmlBuilder<Message>): Document => {
   ) =>
     Button.view(
       {
-        isDisabled: disabled,
+        isDisabled: disabled || m.transferBusy,
         onClick: message,
         toView: (a) =>
           h.button([...a.button, h.Class(`button ${style}`)], [label]),
@@ -302,6 +489,12 @@ const view = (m: Model, h: HtmlBuilder<Message>): Document => {
               [h.Class("admin-heading")],
               [
                 h.div([], [h.h1([], ["Room overview"])]),
+                button(
+                  m.transferBusy ? "Working…" : "Import JSON",
+                  Message.PickArchive(),
+                  "primary",
+                  m.deleting || m.loading,
+                ),
                 button(
                   "Delete all rooms",
                   Message.Select({ id: "__all__" }),
@@ -433,6 +626,98 @@ const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                   : `${rooms.length} ${rooms.length === 1 ? "room" : "rooms"} · Most recently active first`,
               ],
             ),
+            m.preview
+              ? h.section(
+                  [
+                    h.Class("admin-archive-preview"),
+                    h.AriaLabel("Retro archive preview"),
+                  ],
+                  [
+                    h.h2([], [m.preview.title]),
+                    h.p(
+                      [h.Class("subtle")],
+                      [
+                        `${m.preview.participants.length} people · ${m.preview.notes.length} original notes · ${m.preview.votes.length} votes · ${m.preview.actions.length} actions · Finished ${date(m.preview.closedAt)}`,
+                      ],
+                    ),
+                    m.importPreview
+                      ? h.p(
+                          [],
+                          [
+                            "Import as a read-only historical retro. No existing rooms will change. Login links and passwords are not restored.",
+                          ],
+                        )
+                      : null,
+                    h.div(
+                      [h.Class("admin-confirm-buttons")],
+                      [
+                        button("Close", Message.DismissPreview(), "secondary"),
+                        m.importPreview
+                          ? button(
+                              m.transferBusy ? "Importing…" : "Import retro",
+                              Message.ImportArchive(),
+                              "primary",
+                              m.deleting,
+                            )
+                          : null,
+                      ],
+                    ),
+                    ...m.preview.columns.map((column) =>
+                      h.section(
+                        [],
+                        [
+                          h.h3([], [column.title]),
+                          ...combinedNotes(
+                            m.preview!.notes,
+                            m.preview!.combinations,
+                          )
+                            .filter((note) => note.column === column.id)
+                            .map((note) =>
+                              h.article(
+                                [h.Class("archive-note")],
+                                [
+                                  h.p(
+                                    [h.Class("archive-note-text")],
+                                    [note.text],
+                                  ),
+                                  h.p(
+                                    [h.Class("subtle")],
+                                    [
+                                      `${m.preview!.votes.filter((v) => v.noteId === note.id).length} votes · ${(note.parts ?? [note]).map((part) => m.preview!.participants.find((p) => p.id === part.authorId)?.name ?? "Unknown").join(", ")}`,
+                                    ],
+                                  ),
+                                  ...m
+                                    .preview!.actions.filter(
+                                      (a) => a.noteId === note.id,
+                                    )
+                                    .map((action) =>
+                                      h.div(
+                                        [h.Class("archive-action")],
+                                        [
+                                          h.strong([], [action.text]),
+                                          h.p(
+                                            [h.Class("subtle")],
+                                            [
+                                              m.preview!.participants.find(
+                                                (p) => p.id === action.ownerId,
+                                              )?.name ?? "Unassigned",
+                                              action.dueDate
+                                                ? ` · Due ${action.dueDate}`
+                                                : "",
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                )
+              : null,
             ...rooms.map((r) =>
               h.article(
                 [h.Class("admin-room")],
@@ -445,20 +730,49 @@ const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                         [
                           h.span(
                             [h.Class(`phase-tag ${r.phase}`)],
-                            [phases.get(r.phase) ?? r.phase],
+                            [
+                              r.imported
+                                ? "Imported · Read-only"
+                                : (phases.get(r.phase) ?? r.phase),
+                            ],
                           ),
                           h.h2([], [r.title]),
                           h.p(
                             [h.Class("subtle")],
-                            [templates[r.template].title],
+                            [
+                              Object.entries(templates).find(
+                                ([key]) => key === r.template,
+                              )?.[1].title ?? r.template,
+                            ],
                           ),
                         ],
                       ),
-                      button(
-                        "Delete room",
-                        Message.Select({ id: r.id }),
-                        "danger-outline",
-                        m.deleting,
+                      h.div(
+                        [h.Class("admin-room-actions")],
+                        [
+                          r.phase === "closed"
+                            ? button(
+                                "View",
+                                Message.InspectArchive({ id: r.id }),
+                                "secondary",
+                                m.deleting,
+                              )
+                            : null,
+                          r.phase === "closed"
+                            ? button(
+                                "Export JSON",
+                                Message.ExportArchive({ id: r.id }),
+                                "secondary",
+                                m.deleting,
+                              )
+                            : null,
+                          button(
+                            "Delete room",
+                            Message.Select({ id: r.id }),
+                            "danger-outline",
+                            m.deleting,
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -571,6 +885,9 @@ export function startAdmin() {
       Flags: Schema.Struct({}),
       init: () => ({
         model: {
+          transferBusy: false,
+          preview: null,
+          importPreview: false,
           rooms: [],
           pending: [],
           bulkTotal: 0,

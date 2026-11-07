@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-import { Template } from "./Room/Templates.ts";
 
 export const SessionResponse = Schema.Struct({ id: Schema.String });
 
@@ -14,7 +13,8 @@ export const ErrorResponse = Schema.Struct({ error: Schema.String });
 export const RoomSummary = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
-  template: Template,
+  template: Schema.String,
+  imported: Schema.optionalKey(Schema.Boolean),
   phase: Schema.String,
   participants: Schema.Int,
   notes: Schema.Int,

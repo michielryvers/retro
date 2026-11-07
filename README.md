@@ -94,3 +94,21 @@ Alchemy is pinned, with three patches in `patches/`: an internal export, Cloudfl
 ## License
 
 [MIT](LICENSE).
+
+### Save and restore a finished retro
+
+Administrators can use **Export JSON** in `/admin` to download a portable copy
+of a finished retro. **Import JSON** previews the file before saving it as an
+admin-only, read-only historical retro. Notes and their groups, votes, action
+owners, dates and participant names are preserved. Passwords, sessions and
+invitation links are excluded. Markdown summaries cannot be imported.
+
+Imports never overwrite a live room. Uploading the same content twice creates
+one historical copy; imported copies remain until an administrator deletes them.
+Team assignment will come with the team feature. Keep the downloaded file outside
+the app before any storage reset—the imported copy is not an external backup.
+
+To verify locally, run `bun run dev`, then
+`bun scripts/archive-smoke.ts`. This creates a disposable retro, exports it,
+deletes its source, imports it, compares the entire re-export, and cleans up.
+It refuses non-local hosts.

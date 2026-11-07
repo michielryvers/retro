@@ -71,7 +71,7 @@ describe("admin boundary", () => {
     };
 
     for (const host of ["retro.example.com", "example.workers.dev"])
-      for (const path of ["/admin", "/admin/", "/admin/api/rooms"]) {
+      for (const path of ["/admin", "/admin/", "/admin/api/rooms", "/admin/api/export?id=test", "/admin/api/import"]) {
         const response = await worker.fetch(
           new Request(`https://${host}${path}`, {
             headers: {
@@ -81,7 +81,7 @@ describe("admin boundary", () => {
           {
             ADMIN_AUD: "retro-admin",
             ASSETS: { fetch: fail },
-            BACKEND: { fetch: fail, adminList: fail, adminDelete: fail },
+            BACKEND: { fetch: fail, adminList: fail, adminExport: fail, adminImport: fail, adminDelete: fail },
           },
         );
 

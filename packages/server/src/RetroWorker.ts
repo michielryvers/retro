@@ -1,3 +1,4 @@
+import type { RetroArchive } from "@retro/domain/RetroArchive";
 import { RoomRetentionLive } from "@retro/domain/Room/RoomRetention.policy";
 import { RoomCleanupLive } from "./RoomCleanup.ts";
 import { RoomSummary } from "@retro/domain/Room/RoomSummary.view";
@@ -43,6 +44,8 @@ export default class RetroWorker extends Cloudflare.Worker<RetroWorker>()(
     );
 
     return {
+      adminExport: (id: string) => adminService.pipe(Effect.flatMap((a) => a.exportRoom(id))),
+      adminImport: (input: RetroArchive) => adminService.pipe(Effect.flatMap((a) => a.importRoom(input))),
       adminList: () => adminService.pipe(Effect.flatMap((a) => a.list)),
       adminDelete: (id: string, title: string) =>
         adminService.pipe(Effect.flatMap((a) => a.remove(id, title))),

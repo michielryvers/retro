@@ -31,6 +31,11 @@ export const prepareAccess = Effect.fn(function* (
   if (tag !== "CreateRoom" && tag !== "JoinRoom") return empty;
 
   if (!input) return yield* new Refused({ reason: "Invalid credentials." });
+
+  // Historical snapshots and the admin directory are never participant rooms.
+  if (input.target.startsWith("archive-") || input.target.startsWith("__"))
+    return yield* new Refused({ reason: "This is not a joinable room." });
+
   const password = Redacted.value(input.password);
 
   if (password.length > 128 || (tag === "CreateRoom" && password.length < 3))
