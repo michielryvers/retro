@@ -10,6 +10,7 @@ import {
 import { Grant, Invitation } from "./Access.ts";
 import { Combination } from "./Combination.ts";
 import { Template } from "./Templates.ts";
+import { DEFAULT_VOTE_LIMIT } from "./Voting.ts";
 
 // Write-side state: no public tallies, scores, or view-only undo flag.
 export const RoomState = Schema.Struct({
@@ -61,7 +62,7 @@ export const initialRoom: typeof RoomState.Type = {
   actions: [],
   votes: [],
   voters: [],
-  voteLimit: 3,
+  voteLimit: DEFAULT_VOTE_LIMIT,
   timer: { endsAt: 0, remainingMs: 0 },
   combinations: [],
   inviteSeed: Redacted.make(""),

@@ -8,7 +8,7 @@ export class RetroApi extends Domain.Api("RetroApi", {
   commands: [
     "InviteParticipant", "SetTimer", "Handover", "UndoCombine", "SplitNote",
     "CombineNotes", "CreateRoom", "JoinRoom", "SaveNote", "DeleteNote",
-    "SetReady", "RevealNotes", "StartVoting", "SetVote", "SetVotingDone",
+    "SetReady", "RevealNotes", "StartVoting", "SetVoteLimit", "SetVote", "SetVotingDone",
     "FinishVoting", "SaveAction", "DeleteAction", "CloseRoom", "ArchiveRoom",
   ],
   views: ["Invitations", "SharedBoard", "MyNotes"],

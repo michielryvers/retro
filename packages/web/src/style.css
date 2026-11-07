@@ -3953,6 +3953,24 @@ a:focus-visible {
   padding: 16px;
   max-width: 540px;
 }
+.room-voting {
+  max-width: 540px;
+  margin-block: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.room-voting h3 {
+  margin: 0 0 12px;
+}
+.room-voting .field {
+  max-width: 200px;
+}
+.vote-budget {
+  color: var(--muted);
+  font-size: 13px;
+  margin-block: 8px;
+}
 .admin-page {
   padding: 24px 28px 48px;
   max-width: 1240px;
@@ -4240,6 +4258,7 @@ a:focus-visible {
   }
   .room-sheet:not(.section-timer) .room-toolbar,
   .room-sheet:not(.section-handover) .room-tools,
+  .room-sheet:not(.section-voting) .room-voting,
   .room-sheet:not(.section-people) .invitations-panel {
     display: none;
   }
@@ -4323,6 +4342,14 @@ a:focus-visible {
   }
   .room-sheet .room-tools h3 {
     display: none;
+  }
+  .room-sheet .room-voting {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .room-sheet .room-voting .field {
+    max-width: none;
   }
   .room-sheet .room-sheet-people {
     display: grid;

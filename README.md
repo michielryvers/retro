@@ -15,6 +15,8 @@ A little space for your team to look back, speak up, and decide what to try next
 
 There’s a timer to keep things moving, facilitator handover when you need it, and undo for combined notes. Personal invitations work across devices, so rejoining is easy.
 
+Facilitators can choose **1–30 votes per person** in **Facilitator controls** (on mobile: **Room menu → Voting**) before voting starts. The default is three. The budget locks during voting; each visible note group can receive at most one vote from each person.
+
 Choose **Mad / Sad / Glad**, **Start / Stop / Continue**, **Went Well / Improve / Try**, or **Keep / Drop / Try**.
 
 ## Bring your phone, too
@@ -53,6 +55,7 @@ bun run build
 bun run test:integration # with the dev server running
 bunx playwright install chromium
 bun run test:live # two real browser sessions against the running local server
+bun run test:voting # desktop/mobile settings, live budget updates and enforcement
 bun run screenshots
 ```
 

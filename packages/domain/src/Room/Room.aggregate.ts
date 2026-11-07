@@ -46,6 +46,8 @@ import { DeleteNote, NoteDeleted } from "./DeleteNote.command.ts";
 import { SetReady, ReadinessChanged } from "./SetReady.command.ts";
 import { RevealNotes, NotesRevealed } from "./RevealNotes.command.ts";
 import { StartVoting, VotingStarted } from "./StartVoting.command.ts";
+import { SetVoteLimit, VoteLimitChanged } from "./SetVoteLimit.command.ts";
+import { MIN_VOTE_LIMIT, MAX_VOTE_LIMIT } from "./Voting.ts";
 import { SetVote, VoteRecorded } from "./SetVote.command.ts";
 import { SetVotingDone } from "./SetVotingDone.command.ts";
 import { VotingProgressChanged } from "./VotingProgressChanged.event.ts";
@@ -152,6 +154,7 @@ export class Room extends Domain.Aggregate("RetroRoom", {
     SetReady,
     RevealNotes,
     StartVoting,
+    SetVoteLimit,
     SetVote,
     SetVotingDone,
     FinishVoting,
@@ -454,6 +457,14 @@ export class Room extends Domain.Aggregate("RetroRoom", {
 
       return [new NotesRevealed({ notes: s.notes })];
     }),
+    SetVoteLimit: Effect.fn(function* (s, c) {
+      yield* phase(s, ["write", "reveal"], true);
+
+      if (!Number.isSafeInteger(c.limit) || c.limit < MIN_VOTE_LIMIT || c.limit > MAX_VOTE_LIMIT)
+        return yield* refuse(`Choose between ${MIN_VOTE_LIMIT} and ${MAX_VOTE_LIMIT} votes per person.`);
+
+      return c.limit === s.voteLimit ? [] : [new VoteLimitChanged({ limit: c.limit })];
+    }),
     StartVoting: Effect.fn(function* (s) {
       yield* phase(s, ["reveal"], true);
 
@@ -482,7 +493,9 @@ export class Room extends Domain.Aggregate("RetroRoom", {
 
       if (c.selected && mine.length >= s.voteLimit)
         return yield* refuse(
-          `You have used all ${s.voteLimit} votes. Remove one to vote here.`,
+          s.voteLimit === 1
+            ? "You have used your vote. Remove it to vote here."
+            : `You have used all ${s.voteLimit} votes. Remove one to vote here.`,
         );
 
       const votes = s.votes.filter(
@@ -667,6 +680,7 @@ export class Room extends Domain.Aggregate("RetroRoom", {
       phase: "reveal" as const,
       timer: { endsAt: 0, remainingMs: 0 },
     }),
+    VoteLimitChanged: (s, e) => ({ ...s, voteLimit: e.limit }),
     VotingStarted: (s) => ({
       ...s,
       phase: "vote" as const,
