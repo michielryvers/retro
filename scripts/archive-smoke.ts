@@ -63,6 +63,7 @@ try {
     Effect.gen(function* () {
       const api = yield* RetroApi.client;
       yield* api.CreateRoom(target, { title, name: "Alex", template: "keep-drop-try", password: Redacted.make(testPassword) }, host);
+      yield* api.SetVoteLimit(target, { limit: 5 }, host);
       guest.id = yield* joinInvited(api, target, "Sam", host, guest);
       yield* api.SaveNote(target, { id: "a", column: "keep", text: "Pair programming helped us ship." }, host);
       yield* api.SaveNote(target, { id: "b", column: "keep", text: "Keep pairing on tricky changes." }, guest);
@@ -94,6 +95,7 @@ try {
   assert.equal(before.notes.length, 3);
   assert.equal(before.combinations.length, 1);
   assert.equal(before.votes.length, 2);
+  assert.equal(before.voteLimit, 5);
   assert.equal(before.actions[0]?.ownerId, guest.id);
   assert.equal(before.participants.length, 2);
   await remove(target);

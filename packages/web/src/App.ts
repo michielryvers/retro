@@ -10,6 +10,7 @@ import * as Match from "effect/Match";
 import { Template, templates, columnsFor } from "@retro/domain/Room/Templates";
 import { sortByVotes } from "./voteSort.ts";
 import { availableVotes, phaseConfirmation } from "./roomProgress.ts";
+import { MIN_VOTE_LIMIT, MAX_VOTE_LIMIT } from "@retro/domain/Room/Voting";
 import * as Domain from "@alchemy.run/domain";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -95,7 +96,7 @@ export const Model = Schema.Struct({
   name: Schema.String,
   toolsOpen: Schema.Boolean,
   mobileMenu: Schema.Boolean,
-  roomSection: Schema.Literals(["people", "timer", "handover"]),
+  roomSection: Schema.Literals(["people", "timer", "voting", "handover"]),
   handoverTo: Schema.String,
   now: Schema.Number,
   deleteTitle: Schema.String,
@@ -152,7 +153,9 @@ export const Message = defineMessageUnion({
   Split: { id: Schema.String },
   MobileMenu: {},
   CloseRoom: {},
-  RoomSection: { section: Schema.Literals(["people", "timer", "handover"]) },
+  RoomSection: { section: Schema.Literals(["people", "timer", "voting", "handover"]) },
+  ConfigureVotes: { limit: Schema.Int },
+  VoteLimitSaved: {},
   Tick: { now: Schema.Number },
   Tool: { action: ToolAction, seconds: Schema.Int },
   ToolDone: { board: Schema.NullOr(BoardState), notice: Schema.String },
@@ -409,6 +412,23 @@ const Facilitate = Command.define("Facilitate", {
         ),
       ),
     ),
+});
+
+const ConfigureVotes = Command.define("ConfigureVoteBudget", {
+  args: { roomId: Schema.String, limit: Schema.Int },
+  messages: [Message.VoteLimitSaved, Message.Failed],
+  execute: ({ roomId, limit }) => Effect.gen(function* () {
+    const api = yield* RetroApi.Client;
+    const target = RoomId.make(roomId);
+    yield* api.SetVoteLimit(target, { limit });
+
+    // Let the authoritative live board supply the value. A late HTTP readback
+    // could otherwise roll back a newer setting or a transition into voting.
+    return Message.VoteLimitSaved();
+  }).pipe(
+    Effect.timeout("15 seconds"),
+    Effect.catchCause((cause) => Effect.succeed(Message.Failed({ reason: explain(Cause.squash(cause)) }))),
+  ),
 });
 
 const Combine = Command.define("CombineRoomNotes", {
@@ -907,6 +927,20 @@ export const update = (
             ? [LoadInvitations({ roomId: m.roomId, name: "" })]
             : [],
       }),
+      ConfigureVotes: (msg): Update.Return<Model, Message, Services> => {
+        if (
+          m.busy || !m.board || m.board.adminId !== m.actorId ||
+          !["write", "reveal"].includes(m.board.phase) ||
+          !Number.isSafeInteger(msg.limit) || msg.limit < MIN_VOTE_LIMIT || msg.limit > MAX_VOTE_LIMIT ||
+          msg.limit === m.board.voteLimit
+        ) return { model: m };
+
+        return {
+          model: { ...m, busy: true, error: "", notice: "", confirm: "" },
+          commands: [ConfigureVotes({ roomId: m.roomId, limit: msg.limit })],
+        };
+      },
+      VoteLimitSaved: () => ({ model: { ...m, busy: false, notice: "Vote budget saved." } }),
       Split: (msg) =>
         m.busy || m.board?.phase !== "reveal" || m.board.adminId !== m.actorId
           ? { model: m }
@@ -2524,6 +2558,7 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                       ...(admin && b.phase !== "closed"
                         ? [
                             "timer",
+                            "voting",
                             ...(b.participants.some((p) => p.id !== m.actorId)
                               ? ["handover"]
                               : []),
@@ -2541,7 +2576,7 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                         h.OnClick(
                           Message.RoomSection({
                             section: Schema.decodeUnknownSync(
-                              Schema.Literals(["people", "timer", "handover"]),
+                              Schema.Literals(["people", "timer", "voting", "handover"]),
                             )(section),
                           }),
                         ),
@@ -2549,7 +2584,8 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                       [
                         new Map([
                           ["people", "People"],
-                          ["timer", "Timer"],
+                           ["timer", "Timer"],
+                           ["voting", "Voting"],
                           ["handover", "Handover"],
                         ]).get(section) ?? section,
                       ],
@@ -2698,6 +2734,39 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                               false,
                               "x",
                             ),
+                          ],
+                        )
+                      : null,
+                    m.toolsOpen && admin && b.phase !== "closed"
+                      ? h.section(
+                          [h.Class("room-voting"), h.AriaLabel("Voting settings")],
+                          [
+                            h.h3([], ["Voting"]),
+                            Select.view({
+                              id: "vote-limit",
+                              value: String(b.voteLimit),
+                              isDisabled: m.busy || !["write", "reveal"].includes(b.phase),
+                              onChange: (value) => Schema.decodeUnknownOption(
+                                Schema.NumberFromString.check(Schema.isInt(), Schema.isBetween({ minimum: MIN_VOTE_LIMIT, maximum: MAX_VOTE_LIMIT })),
+                              )(value).pipe(Option.match({
+                                onSome: (limit) => Message.ConfigureVotes({ limit }),
+                                onNone: () => Message.Notify({ text: `Choose between ${MIN_VOTE_LIMIT} and ${MAX_VOTE_LIMIT} votes per person.` }),
+                              })),
+                              toView: (attributes) => h.div([h.Class("field")], [
+                                h.label([...attributes.label], ["Votes per person"]),
+                                h.select([...attributes.select], Array.from({ length: MAX_VOTE_LIMIT - MIN_VOTE_LIMIT + 1 }, (_, index) => {
+                                  const limit = MIN_VOTE_LIMIT + index;
+
+                                  return h.option([h.Value(String(limit))], [String(limit)]);
+                                })),
+                              ]),
+                            }, h),
+                            h.p([h.Class("subtle")], [
+                              ["write", "reveal"].includes(b.phase)
+                                ? `Choose ${MIN_VOTE_LIMIT}–${MAX_VOTE_LIMIT} votes per person. Changes are saved immediately and lock when voting starts.`
+                                : "The vote budget is locked because voting has started.",
+                            ]),
+                            h.p([h.Class("subtle")], ["One vote per note group. If there are fewer groups, each person can vote on each available group once."]),
                           ],
                         )
                       : null,
@@ -3042,6 +3111,11 @@ export const view = (m: Model, h: HtmlBuilder<Message>): Document => {
                 )
               : null,
             feedback(),
+            b.phase !== "closed"
+              ? h.p([h.Class("vote-budget"), h.Role("status")], [
+                  `Vote budget: ${b.voteLimit} ${b.voteLimit === 1 ? "vote" : "votes"} per person.`,
+                ])
+              : null,
             b.phase === "vote"
               ? h.p(
                   [h.Class("voting-progress"), h.Role("status")],

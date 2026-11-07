@@ -1,5 +1,6 @@
 import { Grant } from "./Access.ts";
 import * as Schema from "effect/Schema";
+import { DEFAULT_VOTE_LIMIT } from "./Voting.ts";
 import { Template } from "./Templates.ts";
 
 export const Column = Schema.String;
@@ -92,7 +93,7 @@ export const emptyBoard: BoardState = {
   scores: [],
   voters: [],
   actions: [],
-  voteLimit: 3,
+  voteLimit: DEFAULT_VOTE_LIMIT,
 };
 
 export const PrivateState = Schema.Struct({

@@ -24,9 +24,9 @@ const withNotes = (
 
 // State subscriptions publish snapshots without retaining a full-board event history.
 export class SharedBoard extends Domain.View("SharedBoard", {
-  // Recompute existing keys in place from their preserved aggregate history.
-  // This updates old seven-day dates without replacing any DO namespace.
-  version: 1,
+  // Recompute existing keys in place from preserved history. Version 1 extended
+  // retention; version 2 also projects the additive vote-budget event.
+  version: 2,
   from: [Room],
   key: Room,
   state: BoardState,
@@ -93,6 +93,7 @@ export class SharedBoard extends Domain.View("SharedBoard", {
       timer: { endsAt: 0, remainingMs: 0 },
       notes: e.notes,
     }),
+    VoteLimitChanged: (s, e) => ({ ...s, voteLimit: e.limit }),
     VotingStarted: (s) => ({
       ...s,
       phase: "vote" as const,

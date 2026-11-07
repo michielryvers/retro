@@ -26,6 +26,13 @@ describe("portable retro archives", () => {
   it("does not export unfinished rooms", () => {
     expect(() => exportArchive("room", initialRoom)).toThrow("Only finished");
   });
+  it("preserves configured and historical vote budgets in portable archives", () => {
+    for (const voteLimit of [1, 5, 30, 40]) {
+      const archive = { ...archiveFixture(), voteLimit };
+
+      expect(decodeArchive(JSON.parse(JSON.stringify(archive))).voteLimit).toBe(voteLimit);
+    }
+  });
   it("rejects future versions and unknown fields rather than silently dropping data", () => {
     expect(() => decodeArchive({ ...archiveFixture(), version: 2 })).toThrow();
     expect(() =>
