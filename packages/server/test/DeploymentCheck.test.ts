@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { checkDeployment, type HttpRequest } from "../../../scripts/deployment-check.ts";
+import { parseDeploymentOutput } from "../../../scripts/deployment-output.ts";
 
 const origin = "https://retro-prod.example.workers.dev";
 const config = { accountId: "account", token: "secret", domain: "retro.example.com" };
@@ -60,4 +61,35 @@ it("also checks the custom domain when it is accessible", async () => {
   const { request, urls } = mock(200);
   await checkDeployment(deployment, config, request);
   expect(urls).toContain("https://retro.example.com/api/session");
+});
+
+it("reads plain production stack JSON", () => {
+  expect(parseDeploymentOutput(JSON.stringify({
+    url: "https://retro.example.com", api: "https://backend.example.workers.dev", workerName: "retro-prod",
+  }, null, 2))).toEqual(deployment);
+});
+
+it("reads remote state output preceded by Cloudflare credential-refresh diagnostics", async () => {
+  const output = [
+    "[17:01:43.123] INFO: Loading Cloudflare State Store credentials",
+    "• Refreshing Cloudflare State Store credentials",
+    "✓ Refreshing Cloudflare State Store credentials",
+    JSON.stringify({ workerName: "retro-prod" }, null, 2),
+    "",
+  ].join("\n");
+
+  expect(parseDeploymentOutput(output)).toEqual(deployment);
+  await checkDeployment(parseDeploymentOutput(output), config, mock(200).request);
+});
+
+it("does not confuse earlier structured diagnostics with the final stack output", () => {
+  const output = '{"level":"info","workerName":"not-the-deployed-worker"}\n' + JSON.stringify(deployment, null, 2);
+
+  expect(parseDeploymentOutput(output)).toEqual(deployment);
+});
+
+it("fails clearly for missing, malformed or unsafe deployment output", () => {
+  for (const output of ["", "null", "[17:01:43] INFO: no output", '{"workerName":', '{"url":"https://retro.example.com"}', '{"workerName":"https://wrong.example.com"}']) {
+    expect(() => parseDeploymentOutput(output)).toThrow("Could not read the deployed Worker");
+  }
 });
