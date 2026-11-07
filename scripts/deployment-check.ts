@@ -1,9 +1,9 @@
 import * as Schema from "effect/Schema";
 import { SessionResponse } from "@retro/domain/HttpContracts";
+import { parseDeploymentOutput } from "./deployment-output.ts";
 
 export type HttpRequest = (url: string, init?: RequestInit) => Promise<Response>;
 
-const Deployment = Schema.Struct({ workerName: Schema.String });
 const Account = Schema.Struct({ success: Schema.Literal(true), result: Schema.Struct({ subdomain: Schema.String }) });
 
 const checked = async (url: string, request: HttpRequest, init?: RequestInit) => {
@@ -73,7 +73,7 @@ if (import.meta.main) {
     return value;
   };
 
-  const deployment = Schema.decodeUnknownSync(Deployment)(await Bun.file(process.argv[2]!).json());
+  const deployment = parseDeploymentOutput(await Bun.file(process.argv[2]!).text());
   const config = { accountId: required("CLOUDFLARE_ACCOUNT_ID"), token: required("CLOUDFLARE_API_TOKEN"), domain: required("RETRO_DOMAIN") };
 
   for (let attempt = 0; ; attempt++) {
