@@ -27,18 +27,9 @@ const options = (token: string) => ({
 
 it.live("guards private views and prevents event-history disclosure", () =>
   Effect.gen(function* () {
-    const api = yield* RetroApi.testClient;
+    const api = yield* RetroApi.clientInProcess;
     const room = RoomId.make("privacy");
-    yield* api.CreateRoom(
-      {
-        template: "mad-sad-glad",
-        target: room,
-        password: Redacted.make(testPassword),
-        title: "Privacy test",
-        name: "Host",
-      },
-      options(host),
-    );
+    yield* api.CreateRoom(room, { template: "mad-sad-glad", password: Redacted.make(testPassword), title: "Privacy test", name: "Host" }, options(host));
 
     const guestId = yield* joinInvited(
       api,
@@ -48,10 +39,7 @@ it.live("guards private views and prevents event-history disclosure", () =>
       options(guest),
     );
 
-    yield* api.SaveNote(
-      { target: room, id: "secret", column: "mad", text: "PRIVATE SENTENCE" },
-      options(guest),
-    );
+    yield* api.SaveNote(room, { id: "secret", column: "mad", text: "PRIVATE SENTENCE" }, options(guest));
     const board = yield* api.SharedBoard.get(room, options(host));
     expect(board?.notes).toEqual([]);
 
@@ -80,12 +68,9 @@ it.live("guards private views and prevents event-history disclosure", () =>
     expect(noMembership._tag).toBe("Refused");
     const noSession = yield* api.SharedBoard.get(room).pipe(Effect.flip);
     expect(noSession._tag).toBe("Unauthorized");
-    yield* api.RevealNotes({ target: room }, options(host));
-    yield* api.StartVoting({ target: room }, options(host));
-    yield* api.SetVote(
-      { target: room, noteId: "secret", selected: true },
-      options(guest),
-    );
+    yield* api.RevealNotes(room, {}, options(host));
+    yield* api.StartVoting(room, {}, options(host));
+    yield* api.SetVote(room, { noteId: "secret", selected: true }, options(guest));
 
     const votingHistory = yield* api.SharedBoard.list(room, {
       ...options(host),
@@ -102,18 +87,9 @@ it.live(
   "deduplicates retries and prevents cross-session admin escalation",
   () =>
     Effect.gen(function* () {
-      const api = yield* RetroApi.testClient;
+      const api = yield* RetroApi.clientInProcess;
       const room = RoomId.make("retry");
-      yield* api.CreateRoom(
-        {
-          template: "mad-sad-glad",
-          target: room,
-          password: Redacted.make(testPassword),
-          title: "Retry test",
-          name: "Host",
-        },
-        options(host),
-      );
+      yield* api.CreateRoom(room, { template: "mad-sad-glad", password: Redacted.make(testPassword), title: "Retry test", name: "Host" }, options(host));
 
       yield* joinInvited(api, room, "Guest", options(host), options(guest));
 
@@ -125,12 +101,12 @@ it.live(
         commandId: "stable-retry",
       };
 
-      const first = yield* api.SaveNote(cmd, options(guest));
-      const again = yield* api.SaveNote(cmd, options(guest));
+      const first = yield* api.SaveNote(cmd.target, cmd, { ...options(guest), commandId: cmd.commandId });
+      const again = yield* api.SaveNote(cmd.target, cmd, { ...options(guest), commandId: cmd.commandId });
       expect(again.version).toBe(first.version);
 
       const refused = yield* api
-        .RevealNotes({ target: room }, options(guest))
+        .RevealNotes(room, {}, options(guest))
         .pipe(Effect.flip);
 
       expect(refused._tag).toBe("Refused");
@@ -141,18 +117,9 @@ it.live(
   "shares voting completion without choices and withdraws it when a vote is removed",
   () =>
     Effect.gen(function* () {
-      const api = yield* RetroApi.testClient;
+      const api = yield* RetroApi.clientInProcess;
       const room = RoomId.make("voting-progress");
-      yield* api.CreateRoom(
-        {
-          template: "mad-sad-glad",
-          target: room,
-          password: Redacted.make(testPassword),
-          title: "Progress",
-          name: "Host",
-        },
-        options(host),
-      );
+      yield* api.CreateRoom(room, { template: "mad-sad-glad", password: Redacted.make(testPassword), title: "Progress", name: "Host" }, options(host));
 
       const guestId = yield* joinInvited(
         api,
@@ -162,16 +129,10 @@ it.live(
         options(guest),
       );
 
-      yield* api.SaveNote(
-        { target: room, id: "n", column: "glad", text: "A note" },
-        options(host),
-      );
-      yield* api.RevealNotes({ target: room }, options(host));
-      yield* api.StartVoting({ target: room }, options(host));
-      yield* api.SetVote(
-        { target: room, noteId: "n", selected: true },
-        options(guest),
-      );
+      yield* api.SaveNote(room, { id: "n", column: "glad", text: "A note" }, options(host));
+      yield* api.RevealNotes(room, {}, options(host));
+      yield* api.StartVoting(room, {}, options(host));
+      yield* api.SetVote(room, { noteId: "n", selected: true }, options(guest));
       const board = yield* api.SharedBoard.get(room, options(host));
       expect(board?.voters).toEqual([guestId]);
       expect(board?.scores).toEqual([]);
@@ -184,10 +145,7 @@ it.live(
       expect(JSON.stringify(history)).not.toContain("VoteRecorded");
       expect(JSON.stringify(history)).not.toContain('"selected":true');
       expect(JSON.stringify(history)).not.toContain('"votes":');
-      yield* api.SetVote(
-        { target: room, noteId: "n", selected: false },
-        options(guest),
-      );
+      yield* api.SetVote(room, { noteId: "n", selected: false }, options(guest));
       expect((yield* api.SharedBoard.get(room, options(host)))?.voters).toEqual(
         [],
       );
@@ -197,13 +155,10 @@ it.live(
 
 it.live("does not let public commands create rooms over admin or archive identifiers", () =>
   Effect.gen(function* () {
-    const api = yield* RetroApi.testClient;
+    const api = yield* RetroApi.clientInProcess;
 
     for (const id of ["archive-content-hash", "__admin_directory__"]) {
-      const result = yield* api.CreateRoom({
-        target: RoomId.make(id), title: "Reserved", name: "Guest",
-        template: "mad-sad-glad", password: Redacted.make(testPassword),
-      }, options(guest)).pipe(Effect.exit);
+      const result = yield* api.CreateRoom(RoomId.make(id), { title: "Reserved", name: "Guest", template: "mad-sad-glad", password: Redacted.make(testPassword) }, options(guest)).pipe(Effect.exit);
 
       expect(result._tag).toBe("Failure");
     }

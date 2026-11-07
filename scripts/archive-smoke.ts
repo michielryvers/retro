@@ -62,63 +62,25 @@ try {
   await Effect.runPromise(
     Effect.gen(function* () {
       const api = yield* RetroApi.client;
-      yield* api.CreateRoom(
-        {
-          target,
-          title,
-          name: "Alex",
-          template: "keep-drop-try",
-          password: Redacted.make(testPassword),
-        },
-        host,
-      );
+      yield* api.CreateRoom(target, { title, name: "Alex", template: "keep-drop-try", password: Redacted.make(testPassword) }, host);
       guest.id = yield* joinInvited(api, target, "Sam", host, guest);
-      yield* api.SaveNote(
-        {
-          target,
-          id: "a",
-          column: "keep",
-          text: "Pair programming helped us ship.",
-        },
-        host,
-      );
-      yield* api.SaveNote(
-        {
-          target,
-          id: "b",
-          column: "keep",
-          text: "Keep pairing on tricky changes.",
-        },
-        guest,
-      );
-      yield* api.SaveNote(
-        { target, id: "c", column: "try", text: "A shorter planning meeting." },
-        guest,
-      );
+      yield* api.SaveNote(target, { id: "a", column: "keep", text: "Pair programming helped us ship." }, host);
+      yield* api.SaveNote(target, { id: "b", column: "keep", text: "Keep pairing on tricky changes." }, guest);
+      yield* api.SaveNote(target, { id: "c", column: "try", text: "A shorter planning meeting." }, guest);
 
       const early = yield* Effect.promise(() =>
         fetch(`${origin}/admin/api/export?id=${target}`),
       );
 
       assert.equal(early.status, 409);
-      yield* api.RevealNotes({ target }, host);
-      yield* api.CombineNotes({ target, sourceId: "b", targetId: "a" }, host);
-      yield* api.StartVoting({ target }, host);
-      yield* api.SetVote({ target, noteId: "a", selected: true }, guest);
-      yield* api.SetVote({ target, noteId: "a", selected: true }, host);
-      yield* api.FinishVoting({ target }, host);
-      yield* api.SaveAction(
-        {
-          target,
-          id: "action",
-          noteId: "a",
-          text: "Schedule weekly pairing",
-          ownerId: guest.id,
-          dueDate: "2026-12-01",
-        },
-        host,
-      );
-      yield* api.CloseRoom({ target }, host);
+      yield* api.RevealNotes(target, {}, host);
+      yield* api.CombineNotes(target, { sourceId: "b", targetId: "a" }, host);
+      yield* api.StartVoting(target, {}, host);
+      yield* api.SetVote(target, { noteId: "a", selected: true }, guest);
+      yield* api.SetVote(target, { noteId: "a", selected: true }, host);
+      yield* api.FinishVoting(target, {}, host);
+      yield* api.SaveAction(target, { id: "action", noteId: "a", text: "Schedule weekly pairing", ownerId: guest.id, dueDate: "2026-12-01" }, host);
+      yield* api.CloseRoom(target, {}, host);
     }).pipe(
       Effect.scoped,
       Effect.provide(

@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { Room } from "@retro/domain/Room/Room.aggregate";
 import { PreparedAccess } from "@retro/domain/PreparedAccess.context";
-import { prepareAccess, AccessPayload } from "./PrepareAccess.ts";
+import { prepareAccess, AccessCommandPayload } from "./PrepareAccess.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
@@ -43,7 +43,9 @@ export const SessionLive = Layer.effect(
               prepareAccess(
                 rpc._tag,
                 Option.getOrNull(
-                  Schema.decodeUnknownOption(AccessPayload)(payload),
+                  Schema.decodeUnknownOption(AccessCommandPayload)(payload).pipe(
+                    Option.map(({ target, input }) => ({ ...input, target })),
+                  ),
                 ),
               ).pipe(Effect.provideService(Room, rooms)),
               (prepared) =>

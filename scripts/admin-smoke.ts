@@ -34,28 +34,11 @@ const host = await session(),
 await Effect.runPromise(
   Effect.gen(function* () {
     const api = yield* RetroApi.client;
-    yield* api.CreateRoom(
-      {
-        password: Redacted.make(testPassword),
-        target: room,
-        title,
-        name: "QA host",
-        template: "keep-drop-try",
-      },
-      host,
-    );
+    yield* api.CreateRoom(room, { password: Redacted.make(testPassword), title, name: "QA host", template: "keep-drop-try" }, host);
     guest.id = yield* joinInvited(api, room, "QA guest", host, guest);
     host.id = (yield* api.SharedBoard.get(room, host))!.adminId;
 
-    const receipt = yield* api.SaveNote(
-      {
-        target: room,
-        id: "private",
-        column: "keep",
-        text: "Private deletion fixture",
-      },
-      guest,
-    );
+    const receipt = yield* api.SaveNote(room, { id: "private", column: "keep", text: "Private deletion fixture" }, guest);
 
     yield* api.MyNotes.get(RoomId.make(`${room}:${guest.id}`), {
       ...guest,
@@ -110,25 +93,8 @@ await Effect.runPromise(
 
     // Every public route must remain unusable, even to an existing participant.
     const blockedCalls: Effect.Effect<unknown, unknown>[] = [
-      api.JoinRoom(
-        {
-          target: room,
-          participantId: guest.id,
-          token: Redacted.make("0".repeat(64)),
-          password: Redacted.make(testPassword),
-        },
-        guest,
-      ),
-      api.CreateRoom(
-        {
-          template: "mad-sad-glad",
-          password: Redacted.make(testPassword),
-          target: room,
-          title,
-          name: "reuse",
-        },
-        host,
-      ),
+      api.JoinRoom(room, { participantId: guest.id, token: Redacted.make("0".repeat(64)), password: Redacted.make(testPassword) }, guest),
+      api.CreateRoom(room, { template: "mad-sad-glad", password: Redacted.make(testPassword), title, name: "reuse" }, host),
       api.SharedBoard.get(room, host),
       api.MyNotes.get(RoomId.make(`${room}:${guest.id}`), guest),
     ];

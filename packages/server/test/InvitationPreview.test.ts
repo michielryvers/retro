@@ -23,7 +23,7 @@ it.live(
   "reveals only the invited name and room title for a valid token, without granting access",
   () =>
     Effect.gen(function* () {
-      const api = yield* RetroApi.testClient;
+      const api = yield* RetroApi.clientInProcess;
       const room = yield* Room;
       const target = RoomId.make("preview-room");
 
@@ -35,21 +35,9 @@ it.live(
         headers: { cookie: `__Host-cg_session=${"b".repeat(64)}` },
       };
 
-      yield* api.CreateRoom(
-        {
-          template: "mad-sad-glad",
-          target,
-          title: "Sprint 12",
-          name: "Host",
-          password: Redacted.make("abc"),
-        },
-        host,
-      );
+      yield* api.CreateRoom(target, { template: "mad-sad-glad", title: "Sprint 12", name: "Host", password: Redacted.make("abc") }, host);
 
-      const receipt = yield* api.InviteParticipant(
-        { target, name: "Sam" },
-        host,
-      );
+      const receipt = yield* api.InviteParticipant(target, { name: "Sam" }, host);
 
       const invites = (yield* api.Invitations.get(target, {
         ...host,
@@ -84,15 +72,7 @@ it.live(
       expect(
         (yield* api.SharedBoard.get(target, stranger).pipe(Effect.flip))._tag,
       ).toBe("Refused");
-      yield* api.JoinRoom(
-        {
-          target,
-          participantId: person.id,
-          token: Redacted.make(token),
-          password: Redacted.make("wrong"),
-        },
-        stranger,
-      );
+      yield* api.JoinRoom(target, { participantId: person.id, token: Redacted.make(token), password: Redacted.make("wrong") }, stranger);
       expect(
         (yield* api.SharedBoard.get(target, stranger).pipe(Effect.flip))._tag,
       ).toBe("Refused");

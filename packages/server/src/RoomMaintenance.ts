@@ -37,7 +37,7 @@ export const roomMaintenance: AggregateExtension = (name, state, storage) =>
 
           const directory = makeRpcStub<{
             registerRoom: (id: string) => Effect.Effect<void, Error>;
-          }>(env.RetroRoomAggregate.getByName("__admin_directory__"));
+          }>(env["CommonGround.RetroRoomAggregate"].getByName("__admin_directory__"));
 
           yield* directory.registerRoom(id).pipe(Effect.orDie);
           yield* state.storage.put("admin-indexed", true);

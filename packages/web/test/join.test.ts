@@ -25,7 +25,7 @@ it("enters as an invited participant without facilitator invitation links", asyn
 
   const result = await Effect.runPromise(
     Effect.gen(function* () {
-      const api = yield* RetroApi.testClient;
+      const api = yield* RetroApi.clientInProcess;
 
       const host = {
         headers: { cookie: `__Host-cg_session=${"a".repeat(64)}` },
@@ -36,21 +36,9 @@ it("enters as an invited participant without facilitator invitation links", asyn
       };
 
       const target = RoomId.make("participant-join");
-      yield* api.CreateRoom(
-        {
-          template: "mad-sad-glad",
-          target,
-          title: "Retro",
-          name: "Host",
-          password: Redacted.make("abc"),
-        },
-        host,
-      );
+      yield* api.CreateRoom(target, { template: "mad-sad-glad", title: "Retro", name: "Host", password: Redacted.make("abc") }, host);
 
-      const added = yield* api.InviteParticipant(
-        { target, name: "Guest" },
-        host,
-      );
+      const added = yield* api.InviteParticipant(target, { name: "Guest" }, host);
 
       const invitations = (yield* api.Invitations.get(target, {
         ...host,
@@ -74,7 +62,7 @@ it("enters as an invited participant without facilitator invitation links", asyn
       }).effect.pipe(
         Effect.provideService(RetroApi.Client, {
           ...api,
-          JoinRoom: (input) => api.JoinRoom(input, guest),
+          JoinRoom: (target, input) => api.JoinRoom(target, input, guest),
           SharedBoard: {
             ...api.SharedBoard,
             get: (key, options) =>

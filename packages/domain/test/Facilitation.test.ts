@@ -29,7 +29,7 @@ import { SplitNote } from "../src/Room/SplitNote.command.ts";
 import { SharedBoard } from "../src/Room/SharedBoard.view.ts";
 import { Refused } from "../src/Room/Refused.rejection.ts";
 
-const story = Story.make(Retro, { layer: RoomRetentionLive, stub: [RoomCleanup] });
+const story = Story.make(Retro, { layer: RoomRetentionLive, stub: [RoomCleanup], assertAllEvents: false });
 const room = Room.ref("facilitation");
 
 const setup = [

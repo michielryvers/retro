@@ -1,0 +1,880 @@
+diff --git a/node_modules/@alchemy.run/cloudflare/.bun-tag-f60d8af2fd8bbb14 b/.bun-tag-f60d8af2fd8bbb14
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/@alchemy.run/cloudflare/lib/Domain/Retry.js b/lib/Domain/Retry.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..92eb70b230d488f180b5dacd00de1ef76245920b
+--- /dev/null
++++ b/lib/Domain/Retry.js
+@@ -0,0 +1,22 @@
++import * as Effect from "effect/Effect";
++import * as Schedule from "effect/Schedule";
++export const retryableTransit = (error) => {
++    let current = error;
++    let retryable = false;
++    const seen = new Set();
++    while (current !== null && typeof current === "object" && !seen.has(current)) {
++        seen.add(current);
++        const failure = current;
++        if (failure.overloaded === true)
++            return false;
++        if (failure.retryable === true)
++            retryable = true;
++        current = failure.cause;
++    }
++    return retryable;
++};
++export const transit = (call) => Effect.suspend(call).pipe(Effect.catchDefect((error) => Effect.fail(error)), Effect.retry({
++    while: retryableTransit,
++    schedule: Schedule.min([Schedule.exponential("100 millis"), Schedule.spaced("2 seconds")]),
++    times: 35,
++}));
+diff --git a/lib/Domain/index.d.ts b/lib/Domain/index.d.ts
+index 2a8bc6e5edca51ec06b76b2a7afbf28e6392f4e6..bdecb48927cbcfab587d0afb2b3c5bae4a69d1ee 100644
+--- a/lib/Domain/index.d.ts
++++ b/lib/Domain/index.d.ts
+@@ -1,4 +1,10 @@
+ import { Platform } from "@alchemy.run/domain/Platform";
++import type * as Effect from "effect/Effect";
++import type { DurableObjectState } from "../Workers/DurableObjectState.ts";
++export type AggregateExtension = (name: string, state: Effect.Success<typeof DurableObjectState>, storage: {
++    purge: (manifest?: unknown) => Effect.Effect<unknown, never, any>;
++    finishPurge: () => Effect.Effect<void, never, any>;
++}) => Effect.Effect<{ methods?: Record<string, unknown>; afterCommit?: (id: string) => Effect.Effect<void, never, any> }>;
+ import * as Duration from "effect/Duration";
+ import * as Layer from "effect/Layer";
+ import { WorkflowEngine } from "effect/workflow";
+@@ -98,6 +104,7 @@ import { type Worker } from "../Workers/Worker.ts";
+ export declare function layerDurableObjects({ jurisdiction, backfillTimeout, }?: DurableObjectsOptions): Layer.Layer<Platform | WorkflowEngine.WorkflowEngine, never, Worker>;
+ /** Options for {@link layerDurableObjects}. */
+ export interface DurableObjectsOptions {
++    readonly extend?: AggregateExtension;
+     /**
+      * Create and store every Durable Object of the model (aggregates, views,
+      * policies, projections, streams and saga executions) only inside this
+diff --git a/lib/Domain/index.js b/lib/Domain/index.js
+index 151e1193962686132a14d6ffab58a27f8170271d..d6a5aef87103af0ef1e5b3acbeaf342396945ac4 100644
+--- a/lib/Domain/index.js
++++ b/lib/Domain/index.js
+@@ -33,6 +33,39 @@ import { sleep, task, Workflow } from "../Workflows/Workflow.js";
+ import { Backfill as BackfillRun } from "./Backfill.js";
+ import { DeployVersion } from "./Version.js";
+ const pad = (n) => n.toString().padStart(12, "0");
++import { transit } from "./Retry.js";
++// Preserve Retro's storage-level deletion and service-binding maintenance API.
++const maintenance = (state) => ({
++    purge: (manifest = true) => exclusively(Effect.gen(function* () {
++        yield* Effect.promise(async () => {
++            for (const socket of state.raw.getWebSockets())
++                socket.close(1008, "This resource was permanently deleted.");
++            await state.raw.storage.deleteAlarm();
++            await state.raw.storage.transaction(async (tx) => {
++                for (const table of ["alchemy_scheduled_events", "alchemy_alarm_callbacks"]) {
++                    if ([...state.raw.storage.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", table)].length)
++                        state.raw.storage.sql.exec(`DELETE FROM ${table}`);
++                }
++                let startAfter;
++                while (true) {
++                    const batch = await tx.list({ limit: 32, ...(startAfter ? { startAfter } : {}) });
++                    const keys = [...batch.keys()];
++                    if (keys.length === 0)
++                        break;
++                    await tx.delete(keys);
++                    startAfter = keys[keys.length - 1];
++                }
++                await tx.put("deleted", manifest);
++            });
++        });
++        return manifest;
++    })),
++    finishPurge: () => state.storage.put("deleted", true),
++});
++const ensurePresent = (state) => Effect.gen(function* () {
++    if (yield* state.storage.get("deleted"))
++        return yield* Effect.die(new Error("This resource was permanently deleted."));
++});
+ const DefectTag = "alchemy/Domain/Defect";
+ /**
+  * Workers RPC replaces thrown errors with an opaque "internal error". Return
+@@ -46,18 +79,13 @@ const reportDefects = (effect) => effect.pipe(Effect.catchCause((cause) => Effec
+  * "do not implement" our methods). Backs off from 100ms to 2s, about a minute
+  * in total, so a call survives a deploy's rollout.
+  */
+-const TRANSIT_RETRY = {
+-    // Whichever delay is shorter: exponential at first, then every 2 seconds.
+-    schedule: Schedule.min([Schedule.exponential("100 millis"), Schedule.spaced("2 seconds")]),
+-    times: 35,
+-};
+ /**
+  * Call a Durable Object. A call that fails in transit is retried: every Domain
+  * object method is idempotent (sends dedupe by command id, deliveries by
+  * checkpoint, schedules replace, reads are reads). A defect the object
+  * reported, or a call that keeps failing, is a defect for the caller.
+  */
+-const unwrapDefects = (call) => call.pipe(Effect.catchDefect((defect) => Effect.fail(defect)), Effect.retry(TRANSIT_RETRY), Effect.orDie, Effect.flatMap((value) => value !== null && typeof value === "object" && DefectTag in value
++const unwrapDefects = (call) => transit(call).pipe(Effect.orDie, Effect.flatMap((value) => value !== null && typeof value === "object" && DefectTag in value
+     ? Effect.die(new Error(String(value[DefectTag])))
+     : Effect.succeed(value)));
+ /**
+@@ -106,7 +134,7 @@ const exclusively = (effect) => Effect.gen(function* () {
+ /** What `scheduled:<commandId>` holds once that command is cancelled; never a job token. */
+ const CANCELLED = "cancelled";
+ /** How long a queue drain may hold its lease before another drain may take over. */
+-const LEASE_MS = 60_000;
++const LEASE_MS = 120_000;
+ /**
+  * A durable, ordered work queue in the instance's storage. Rows are written
+  * in the same transaction as the state change that produced them, processed
+@@ -128,10 +156,11 @@ const queue = (name, process) => Effect.gen(function* () {
+     // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- the Durable Object provides its state and RuntimeContext on every event
+     const drain = Effect.gen(function* () {
+         if (!(yield* acquire))
+-            return;
++            return yield* Effect.die(new Error("Domain drain lease is still held"));
+         yield* Effect.gen(function* () {
+-            const rows = yield* state.storage.list({ prefix });
++            const rows = yield* state.storage.list({ prefix, limit: 32 });
+             for (const [key, row] of rows) {
++                yield* state.storage.put(lease, Date.now() + LEASE_MS);
+                 yield* process(row);
+                 yield* state.storage.delete(key);
+             }
+@@ -243,10 +272,8 @@ const connectTo = (namespace) => (key, subscription) => Effect.gen(function* ()
+     });
+     // Like every other call, ride out a deploy's rollout: an instance still
+     // running the previous script cannot upgrade, so retry until one does.
+-    const response = yield* namespace
+-        .getByName(key)
+-        .fetch(forwarded)
+-        .pipe(Effect.filterOrFail((response) => response.status === 101, (response) => new Error(`Live read upgrade answered ${response.status}`)), Effect.retry(TRANSIT_RETRY), Effect.orDie);
++    const response = yield* transit(() => namespace.getByName(key).fetch(forwarded)
++        .pipe(Effect.filterOrFail((response) => response.status === 101, (response) => Object.assign(new Error(`Live read upgrade answered ${response.status}`), { retryable: response.status === 503 })))).pipe(Effect.orDie);
+     // A fetched Response's headers are immutable; re-wrap the socket so
+     // middleware (CORS, cookies) can still add headers to the upgrade.
+     const body = response.body;
+@@ -477,8 +504,9 @@ const ensureRegistered = (net, ref) => Effect.gen(function* () {
+     yield* net.node.register(Backfill.leafOf(ref), ref);
+     yield* state.storage.put({ registered: true, [ID_KEY]: ref.id });
+ });
+-const aggregateObject = (kit, net, model, planOf) => Effect.gen(function* () {
++const aggregateObject = (kit, net, model, planOf, extend) => Effect.gen(function* () {
+     const state = yield* DurableObjectState;
++    const extension = yield* extend(kit.name, state, maintenance(state));
+     return Effect.gen(function* () {
+         const outbox = yield* queue("outbox", kit.deliver);
+         const currentMeta = state.storage
+@@ -509,6 +537,7 @@ const aggregateObject = (kit, net, model, planOf) => Effect.gen(function* () {
+         }));
+         // Callers run it `exclusively`.
+         const commit = (id, command, meta) => Effect.gen(function* () {
++            yield* ensurePresent(state);
+             const duplicate = yield* state.storage.get(`receipt:${meta.commandId}`);
+             if (duplicate)
+                 return { sent: duplicate, kick: false };
+@@ -568,6 +597,8 @@ const aggregateObject = (kit, net, model, planOf) => Effect.gen(function* () {
+             const { sent, kick } = yield* exclusively(commit(id, command, meta));
+             if (kick)
+                 yield* outbox.kick;
++            if (sent._tag === "Accepted" && extension.afterCommit)
++                yield* extension.afterCommit(id);
+             return sent;
+         });
+         const executed = (commandId) => state.storage
+@@ -580,6 +611,8 @@ const aggregateObject = (kit, net, model, planOf) => Effect.gen(function* () {
+         // the commit (the receipt takes over), so a retried job still runs.
+         const timers = yield* makeCallback("domain:schedule", (job) => Effect.gen(function* () {
+             const key = `scheduled:${job.meta.commandId}`;
++            if (yield* state.storage.get("deleted"))
++                return;
+             yield* ensureRegistered(net, { source: kit.name, id: job.id });
+             const kick = yield* exclusively(Effect.gen(function* () {
+                 // A job scheduled before tokens existed has none, and runs.
+@@ -594,8 +627,11 @@ const aggregateObject = (kit, net, model, planOf) => Effect.gen(function* () {
+                 yield* outbox.kick;
+         }));
+         return {
++            ...maintenance(state),
++            ...extension.methods,
+             send: (id, command, meta) => reportDefects(send(id, command, meta)),
+             schedule: (id, command, meta, due) => Effect.gen(function* () {
++                yield* ensurePresent(state);
+                 if (yield* executed(meta.commandId))
+                     return "AlreadyExecuted";
+                 const token = yield* Effect.sync(() => crypto.randomUUID());
+@@ -631,6 +667,7 @@ const aggregateObject = (kit, net, model, planOf) => Effect.gen(function* () {
+             bfHandoff: (id, target, key, through) => reportDefects(sourceFor(id).handoff(target, key, through)),
+             // A live read of this instance: accept its WebSocket, then push on every commit.
+             fetch: accept((id, subscription) => Effect.gen(function* () {
++                yield* ensurePresent(state);
+                 const current = yield* currentMeta;
+                 const events = subscription.mode === "events" ? yield* eventsAfter(subscription.cursor) : [];
+                 return yield* kit.push(id, subscription, current, events);
+@@ -782,7 +819,10 @@ const viewObject = (kit, net, model, planOf) => Effect.gen(function* () {
+             });
+         });
+         return {
++            ...maintenance(state),
+             receive: (key, deliveries) => reportDefects(Effect.gen(function* () {
++                if (yield* state.storage.get("deleted"))
++                    return;
+                 yield* ensureRegistered(net, { source: kit.name, id: key });
+                 // While a backfill runs, the key buffers deliveries and merges them in order.
+                 if (!(yield* consumerFor(key).admit(target, deliveries)))
+@@ -790,7 +830,7 @@ const viewObject = (kit, net, model, planOf) => Effect.gen(function* () {
+                 yield* exclusively(state.storage.transaction(apply(key, deliveries)));
+                 yield* flushAfter;
+             })),
+-            read: () => reportDefects(read),
++            read: () => reportDefects(ensurePresent(state).pipe(Effect.andThen(read))),
+             after: (after) => reportDefects(entriesAfter(after)),
+             // The backfill protocol, as a source, a consumer and a scanner.
+             ...scannerRpc(() => scannerFor()),
+@@ -816,6 +856,7 @@ const viewObject = (kit, net, model, planOf) => Effect.gen(function* () {
+             })),
+             // A live read of this key: accept its WebSocket, then push on every commit.
+             fetch: accept((key, subscription) => Effect.gen(function* () {
++                yield* ensurePresent(state);
+                 const snapshot = yield* read;
+                 const entries = subscription.mode === "events" ? yield* entriesAfter(subscription.cursor) : [];
+                 return yield* kit.push(key, subscription, snapshot, entries);
+@@ -829,9 +870,12 @@ const policyObject = (kit) => Effect.gen(function* () {
+     return Effect.gen(function* () {
+         const inbox = yield* queue("inbox", kit.run);
+         return {
++            ...maintenance(state),
+             receive: (delivery) => reportDefects(Effect.gen(function* () {
+                 const id = `${delivery.source}:${delivery.seq}`;
+                 const accepted = yield* exclusively(state.storage.transaction(Effect.gen(function* () {
++                    if (yield* state.storage.get("deleted"))
++                        return false;
+                     if (yield* state.storage.get(`seen:${id}`))
+                         return false;
+                     yield* state.storage.put(`seen:${id}`, true);
+@@ -1144,7 +1188,7 @@ const durableObjectPlatform = (jurisdiction,
+ /** How long a deploy waits for a backfill, in seconds. */
+ backfillTimeoutSeconds, 
+ /** The Domain version to lay models out with: `undefined` for the layout from before versions. */
+-version, legacySagas) => Layer.effect(Platform, Effect.gen(function* () {
++version, legacySagas, extend) => Layer.effect(Platform, Effect.gen(function* () {
+     /** A Durable Object namespace from the Worker's bindings, in the platform's jurisdiction. */
+     const fromBinding = (native) => {
+         const wrap = (namespace) => ({
+@@ -1225,8 +1269,8 @@ version, legacySagas) => Layer.effect(Platform, Effect.gen(function* () {
+         const complete = new Set();
+         const net = {
+             node: {
+-                register: (path, ref) => unwrapDefects(nodeStub(path).register(path, ref)),
+-                child: (path, child) => unwrapDefects(nodeStub(path).child(path, child)),
++                register: (path, ref) => unwrapDefects(() => nodeStub(path).register(path, ref)),
++                child: (path, child) => unwrapDefects(() => nodeStub(path).child(path, child)),
+                 list: (path, after) => callOnce(nodeStub(path).list(path, after)),
+             },
+             source: {
+@@ -1299,7 +1343,7 @@ version, legacySagas) => Layer.effect(Platform, Effect.gen(function* () {
+                     : Effect.succeed(fromBinding(namespace).getByName(RUN_ROOT));
+             });
+             for (const target of targets) {
+-                const begun = yield* task(`begin-${target}`, reachable(Effect.flatMap(root(target), (stub) => unwrapDefects(stub.bfRunBegin(target, plans[target])))), { retries: REACH_RETRIES });
++                const begun = yield* task(`begin-${target}`, reachable(Effect.flatMap(root(target), (stub) => unwrapDefects(() => stub.bfRunBegin(target, plans[target])))), { retries: REACH_RETRIES });
+                 // Started reading other sources: waiting on it would report a history
+                 // that misses the new ones. The deploy fails, saying to bump the version.
+                 if (begun.status === "changed")
+@@ -1310,7 +1354,7 @@ version, legacySagas) => Layer.effect(Platform, Effect.gen(function* () {
+             // Each check's output is the runs' progress: the deploy reads the latest one
+             // from the instance's steps, and reports it while it waits.
+             for (let check = 0;; check++) {
+-                const progress = yield* task(`check-${check}`, reachable(Effect.forEach(targets, (target) => Effect.flatMap(root(target), (stub) => unwrapDefects(stub.bfRunProgress(target))))), { retries: REACH_RETRIES });
++                const progress = yield* task(`check-${check}`, reachable(Effect.forEach(targets, (target) => Effect.flatMap(root(target), (stub) => unwrapDefects(() => stub.bfRunProgress(target))))), { retries: REACH_RETRIES });
+                 if (progress.every((run) => run.phase === "complete"))
+                     return { complete: true, progress };
+                 yield* sleep(`wait-${check}`, 
+@@ -1332,19 +1376,19 @@ version, legacySagas) => Layer.effect(Platform, Effect.gen(function* () {
+         });
+         const host = {
+             aggregate: (aggregate, kit) => inInit(Effect.gen(function* () {
+-                const namespace = yield* object(`${aggregate.aggregateName}Aggregate`, aggregateObject(kit, net, current, consumerPlans));
++                const namespace = yield* object(`${aggregate.aggregateName}Aggregate`, aggregateObject(kit, net, current, consumerPlans, extend));
+                 sources.set(named(`${aggregate.aggregateName}Aggregate`), namespace);
+                 return {
+-                    send: (id, command, meta) => announce.pipe(Effect.andThen(unwrapDefects(namespace.getByName(id).send(id, command, meta)))),
++                    send: (id, command, meta) => announce.pipe(Effect.andThen(unwrapDefects(() => namespace.getByName(id).send(id, command, meta)))),
+                     // The object answers with a tag (RPC loses typed failures); fail with it here.
+-                    schedule: (id, command, meta, due) => unwrapDefects(namespace.getByName(id).schedule(id, command, meta, due)).pipe(Effect.flatMap((outcome) => outcome === "AlreadyExecuted"
++                    schedule: (id, command, meta, due) => unwrapDefects(() => namespace.getByName(id).schedule(id, command, meta, due)).pipe(Effect.flatMap((outcome) => outcome === "AlreadyExecuted"
+                         ? Effect.fail(new AlreadyExecuted({
+                             aggregate: aggregate.aggregateName,
+                             id,
+                             commandId: meta.commandId,
+                         }))
+                         : Effect.succeed(outcome.at))),
+-                    unschedule: (id, commandId) => unwrapDefects(namespace.getByName(id).unschedule(commandId)).pipe(Effect.flatMap((outcome) => {
++                    unschedule: (id, commandId) => unwrapDefects(() => namespace.getByName(id).unschedule(commandId)).pipe(Effect.flatMap((outcome) => {
+                         const fields = { aggregate: aggregate.aggregateName, id, commandId };
+                         if (outcome === "AlreadyExecuted")
+                             return Effect.fail(new AlreadyExecuted(fields));
+@@ -1354,10 +1398,10 @@ version, legacySagas) => Layer.effect(Platform, Effect.gen(function* () {
+                             return Effect.fail(new NotScheduled(fields));
+                         return Effect.void;
+                     })),
+-                    state: (id) => announce.pipe(Effect.andThen(unwrapDefects(namespace.getByName(id).state()))),
++                    state: (id) => announce.pipe(Effect.andThen(unwrapDefects(() => namespace.getByName(id).state()))),
+                     // Streamed responses poll; WebSocket reads (`connect`) are pushed on commit.
+-                    changes: (id) => Stream.fromEffectSchedule(unwrapDefects(namespace.getByName(id).state()), POLL).pipe(Stream.changesWith((a, b) => a.version === b.version)),
+-                    tail: (id, from) => pollAfter(from, (cursor) => unwrapDefects(namespace.getByName(id).after(cursor)), (event) => event.envelope.seq),
++                    changes: (id) => Stream.fromEffectSchedule(unwrapDefects(() => namespace.getByName(id).state()), POLL).pipe(Stream.changesWith((a, b) => a.version === b.version)),
++                    tail: (id, from) => pollAfter(from, (cursor) => unwrapDefects(() => namespace.getByName(id).after(cursor)), (event) => event.envelope.seq),
+                     connect: connectTo(namespace),
+                 };
+             })),
+@@ -1407,10 +1451,10 @@ version, legacySagas) => Layer.effect(Platform, Effect.gen(function* () {
+                 const orComputed = (fromObject, fromHere, key) => ready(key).pipe(Effect.andThen(fromObject), Effect.catchCause((cause) => kit.catchUp === undefined
+                     ? Effect.failCause(cause)
+                     : Effect.map(computed(key), fromHere)));
+-                const read = (key) => announce.pipe(Effect.andThen(orComputed(unwrapDefects(namespace.getByName(key).read()), (result) => result.snapshot, key)));
+-                const after = (key, cursor) => orComputed(unwrapDefects(namespace.getByName(key).after(cursor)), (result) => result.entries.filter((entry) => entry.seq > cursor), key);
++                const read = (key) => announce.pipe(Effect.andThen(orComputed(unwrapDefects(() => namespace.getByName(key).read()), (result) => result.snapshot, key)));
++                const after = (key, cursor) => orComputed(unwrapDefects(() => namespace.getByName(key).after(cursor)), (result) => result.entries.filter((entry) => entry.seq > cursor), key);
+                 return {
+-                    receive: (key, deliveries) => unwrapDefects(namespace.getByName(key).receive(key, deliveries)),
++                    receive: (key, deliveries) => unwrapDefects(() => namespace.getByName(key).receive(key, deliveries)),
+                     read,
+                     // Streamed responses poll; WebSocket reads (`connect`) are pushed on commit.
+                     changes: (key) => Stream.fromEffectSchedule(read(key), POLL).pipe(Stream.changesWith((a, b) => a.version === b.version)),
+@@ -1436,17 +1480,17 @@ version, legacySagas) => Layer.effect(Platform, Effect.gen(function* () {
+                 consumers.set(named(cls), namespace);
+                 consumers.set(runClass(named(cls)), yield* object(runClass(cls), projectionObject(kit, net, consumerPlans)));
+                 return {
+-                    receive: (delivery) => unwrapDefects(namespace.getByName(delivery.key).receive(delivery.key, delivery)),
+-                    checkpoints: (key) => unwrapDefects(namespace.getByName(key).checkpoints()),
++                    receive: (delivery) => unwrapDefects(() => namespace.getByName(delivery.key).receive(delivery.key, delivery)),
++                    checkpoints: (key) => unwrapDefects(() => namespace.getByName(key).checkpoints()),
+                 };
+             })),
+             stream: (stream, kit) => inInit(Effect.gen(function* () {
+                 const namespace = yield* object(`${stream.streamName}Stream`, streamObject(kit));
+-                const read = (key) => unwrapDefects(namespace.getByName(key).read());
+-                const after = (key, cursor) => unwrapDefects(namespace.getByName(key).after(cursor));
++                const read = (key) => unwrapDefects(() => namespace.getByName(key).read());
++                const after = (key, cursor) => unwrapDefects(() => namespace.getByName(key).after(cursor));
+                 return {
+-                    append: (key, write) => unwrapDefects(namespace.getByName(key).append(key, write)),
+-                    advance: (key, checkpoints) => unwrapDefects(namespace.getByName(key).advance(checkpoints)),
++                    append: (key, write) => unwrapDefects(() => namespace.getByName(key).append(key, write)),
++                    advance: (key, checkpoints) => unwrapDefects(() => namespace.getByName(key).advance(checkpoints)),
+                     read,
+                     // Streamed responses poll; WebSocket reads (`connect`) are pushed on append.
+                     changes: (key) => Stream.fromEffectSchedule(read(key), POLL).pipe(Stream.changesWith((a, b) => a.seq === b.seq)),
+@@ -1488,7 +1532,7 @@ version, legacySagas) => Layer.effect(Platform, Effect.gen(function* () {
+             policy: (policy, kit) => inInit(Effect.gen(function* () {
+                 const namespace = yield* object(`${policy.policyName}Policy`, policyObject(kit));
+                 return {
+-                    receive: (delivery) => unwrapDefects(namespace.getByName(delivery.key).receive(delivery)),
++                    receive: (delivery) => unwrapDefects(() => namespace.getByName(delivery.key).receive(delivery)),
+                 };
+             })),
+         };
+@@ -1604,18 +1648,21 @@ version, legacySagas) => Layer.effect(Platform, Effect.gen(function* () {
+  * @provides Domain.Platform
+  * @provides WorkflowEngine
+  */
+-export function layerDurableObjects({ jurisdiction, backfillTimeout, } = {}) {
++export function layerDurableObjects({ jurisdiction, backfillTimeout, extend = noExtension, } = {}) {
+     const timeoutSeconds = backfillTimeout === undefined ? undefined : Duration.toSeconds(backfillTimeout);
+     // The same options return the same Layer, so models that each provide it
+     // share one platform and one workflow engine.
+     const key = `${jurisdiction ?? ""}|${timeoutSeconds ?? ""}`;
+-    let platform = platforms.get(key);
++    let configured = platforms.get(extend);
++    if (configured === undefined)
++        platforms.set(extend, configured = new Map());
++    let platform = configured.get(key);
+     if (platform === undefined)
+-        platforms.set(key, (platform = Layer.unwrap(Effect.gen(function* () {
++        configured.set(key, (platform = Layer.unwrap(Effect.gen(function* () {
+             const version = yield* DeployVersion;
+             const engine = layerDurableObjectEngine({ jurisdiction });
+             const legacySagas = new Map();
+-            return Layer.merge(durableObjectPlatform(jurisdiction, timeoutSeconds, version, legacySagas), version === undefined ? legacyEngine(legacySagas).pipe(Layer.provide(engine)) : engine);
++            return Layer.merge(durableObjectPlatform(jurisdiction, timeoutSeconds, version, legacySagas, extend), version === undefined ? legacyEngine(legacySagas).pipe(Layer.provide(engine)) : engine);
+         }))));
+     return platform;
+ }
+@@ -1642,5 +1689,5 @@ const legacyEngine = (legacySagas) => Layer.effect(WorkflowEngine.WorkflowEngine
+     };
+     return legacy;
+ }));
+-const platforms = new Map();
+-//# sourceMappingURL=index.js.map
+\ No newline at end of file
++const noExtension = () => Effect.succeed({});
++const platforms = new WeakMap();
+diff --git a/node_modules/@alchemy.run/cloudflare/src/Domain/Retry.ts b/src/Domain/Retry.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..75e9dd71f89dd20a5a4ca5c902c6ac128bd91f1b
+--- /dev/null
++++ b/src/Domain/Retry.ts
+@@ -0,0 +1,26 @@
++import * as Effect from "effect/Effect";
++import * as Schedule from "effect/Schedule";
++
++export const retryableTransit = (error: unknown): boolean => {
++  let current = error;
++  let retryable = false;
++  const seen = new Set<unknown>();
++  while (current !== null && typeof current === "object" && !seen.has(current)) {
++    seen.add(current);
++    const failure = current as { overloaded?: boolean; retryable?: boolean; cause?: unknown };
++    if (failure.overloaded === true) return false;
++    if (failure.retryable === true) retryable = true;
++    current = failure.cause;
++  }
++  return retryable;
++};
++
++export const transit = <A>(call: () => Effect.Effect<A, unknown>) =>
++  Effect.suspend(call).pipe(
++    Effect.catchDefect((error) => Effect.fail(error)),
++    Effect.retry({
++      while: retryableTransit,
++      schedule: Schedule.min([Schedule.exponential("100 millis"), Schedule.spaced("2 seconds")]),
++      times: 35,
++    }),
++  );
+diff --git a/src/Domain/index.ts b/src/Domain/index.ts
+index edd88dc169f27693fe350af2335b6ad38c3401aa..3f718468675031ab44a375395eb68b089b21b0f3 100644
+--- a/src/Domain/index.ts
++++ b/src/Domain/index.ts
+@@ -66,6 +66,41 @@ import { DeployVersion } from "./Version.ts";
+ 
+ const pad = (n: number) => n.toString().padStart(12, "0");
+ 
++import { transit } from "./Retry.ts";
++
++// Preserve Retro's storage-level deletion and service-binding maintenance API.
++const maintenance = (state: DurableObjectState) => ({
++  purge: (manifest: unknown = true) => exclusively(Effect.gen(function* () {
++    yield* Effect.promise(async () => {
++      for (const socket of state.raw.getWebSockets()) socket.close(1008, "This resource was permanently deleted.");
++      await state.raw.storage.deleteAlarm();
++      await state.raw.storage.transaction(async tx => {
++        for (const table of ["alchemy_scheduled_events", "alchemy_alarm_callbacks"]) {
++          if ([...state.raw.storage.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", table)].length) state.raw.storage.sql.exec(`DELETE FROM ${table}`);
++        }
++        let startAfter: string | undefined;
++        while (true) {
++          const batch = await tx.list({ limit: 32, ...(startAfter ? { startAfter } : {}) });
++          const keys = [...batch.keys()];
++          if (keys.length === 0) break;
++          await tx.delete(keys);
++          startAfter = keys[keys.length - 1];
++        }
++        await tx.put("deleted", manifest);
++      });
++    });
++    return manifest;
++  })),
++  finishPurge: () => state.storage.put("deleted", true),
++});
++const ensurePresent = (state: DurableObjectState) => Effect.gen(function* () {
++  if (yield* state.storage.get("deleted")) return yield* Effect.die(new Error("This resource was permanently deleted."));
++});
++export type AggregateExtension = (name: string, state: Effect.Success<typeof DurableObjectState>, storage: ReturnType<typeof maintenance>) => Effect.Effect<{
++  methods?: Record<string, unknown>;
++  afterCommit?: (id: string) => Effect.Effect<void, never, any>;
++}>;
++
+ const DefectTag = "alchemy/Domain/Defect";
+ 
+ /**
+@@ -86,11 +121,6 @@ const reportDefects = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  * "do not implement" our methods). Backs off from 100ms to 2s, about a minute
+  * in total, so a call survives a deploy's rollout.
+  */
+-const TRANSIT_RETRY = {
+-  // Whichever delay is shorter: exponential at first, then every 2 seconds.
+-  schedule: Schedule.min([Schedule.exponential("100 millis"), Schedule.spaced("2 seconds")]),
+-  times: 35,
+-} as const;
+ 
+ /**
+  * Call a Durable Object. A call that fails in transit is retried: every Domain
+@@ -98,10 +128,8 @@ const TRANSIT_RETRY = {
+  * checkpoint, schedules replace, reads are reads). A defect the object
+  * reported, or a call that keeps failing, is a defect for the caller.
+  */
+-const unwrapDefects = <A>(call: Effect.Effect<unknown, unknown>): Effect.Effect<A> =>
+-  call.pipe(
+-    Effect.catchDefect((defect) => Effect.fail(defect)),
+-    Effect.retry(TRANSIT_RETRY),
++const unwrapDefects = <A>(call: () => Effect.Effect<unknown, unknown>): Effect.Effect<A> =>
++  transit(call).pipe(
+     Effect.orDie,
+     Effect.flatMap((value) =>
+       value !== null && typeof value === "object" && DefectTag in value
+@@ -198,7 +226,7 @@ const exclusively = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+ const CANCELLED = "cancelled";
+ 
+ /** How long a queue drain may hold its lease before another drain may take over. */
+-const LEASE_MS = 60_000;
++const LEASE_MS = 120_000;
+ 
+ /**
+  * A durable, ordered work queue in the instance's storage. Rows are written
+@@ -222,10 +250,11 @@ const queue = <Row>(name: string, process: (row: Row) => Effect.Effect<void>) =>
+     );
+     // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- the Durable Object provides its state and RuntimeContext on every event
+     const drain: Effect.Effect<void> = Effect.gen(function* () {
+-      if (!(yield* acquire)) return;
++      if (!(yield* acquire)) return yield* Effect.die(new Error("Domain drain lease is still held"));
+       yield* Effect.gen(function* () {
+-        const rows = yield* state.storage.list<Row>({ prefix });
++        const rows = yield* state.storage.list<Row>({ prefix, limit: 32 });
+         for (const [key, row] of rows) {
++          yield* state.storage.put(lease, Date.now() + LEASE_MS);
+           yield* process(row);
+           yield* state.storage.delete(key);
+         }
+@@ -369,17 +398,13 @@ const connectTo = (namespace: Namespace) => (key: string, subscription: Subscrip
+     });
+     // Like every other call, ride out a deploy's rollout: an instance still
+     // running the previous script cannot upgrade, so retry until one does.
+-    const response = yield* namespace
+-      .getByName(key)
+-      .fetch(forwarded)
++    const response = yield* transit(() => namespace.getByName(key).fetch(forwarded)
+       .pipe(
+         Effect.filterOrFail(
+           (response) => response.status === 101,
+-          (response) => new Error(`Live read upgrade answered ${response.status}`),
++          (response) => Object.assign(new Error(`Live read upgrade answered ${response.status}`), { retryable: response.status === 503 }),
+         ),
+-        Effect.retry(TRANSIT_RETRY),
+-        Effect.orDie,
+-      );
++      )).pipe(Effect.orDie);
+     // A fetched Response's headers are immutable; re-wrap the socket so
+     // middleware (CORS, cookies) can still add headers to the upgrade.
+     const body = response.body;
+@@ -675,9 +700,11 @@ const aggregateObject = (
+   net: Backfill.Network,
+   model: () => ReadonlyArray<string>,
+   planOf: PlanOf,
++  extend: AggregateExtension,
+ ) =>
+   Effect.gen(function* () {
+     const state = yield* DurableObjectState;
++    const extension = yield* extend(kit.name, state, maintenance(state));
+     return Effect.gen(function* () {
+       const outbox = yield* queue<Delivery>("outbox", kit.deliver);
+       const currentMeta = state.storage
+@@ -723,6 +750,7 @@ const aggregateObject = (
+       // Callers run it `exclusively`.
+       const commit = (id: string, command: Json, meta: Aggregate.SendMeta) =>
+         Effect.gen(function* () {
++          yield* ensurePresent(state);
+           const duplicate = yield* state.storage.get<SendResult>(`receipt:${meta.commandId}`);
+           if (duplicate) return { sent: duplicate, kick: false };
+           const current = yield* currentMeta;
+@@ -791,6 +819,7 @@ const aggregateObject = (
+           yield* ensureRegistered(net, { source: kit.name, id });
+           const { sent, kick } = yield* exclusively(commit(id, command, meta));
+           if (kick) yield* outbox.kick;
++          if (sent._tag === "Accepted" && extension.afterCommit) yield* extension.afterCommit(id);
+           return sent;
+         });
+       const executed = (commandId: string) =>
+@@ -812,6 +841,7 @@ const aggregateObject = (
+         }) =>
+           Effect.gen(function* () {
+             const key = `scheduled:${job.meta.commandId}`;
++            if (yield* state.storage.get("deleted")) return;
+             yield* ensureRegistered(net, { source: kit.name, id: job.id });
+             const kick = yield* exclusively(
+               Effect.gen(function* () {
+@@ -830,10 +860,13 @@ const aggregateObject = (
+           }),
+       );
+       return {
++        ...maintenance(state),
++        ...extension.methods,
+         send: (id: string, command: Json, meta: Aggregate.SendMeta) =>
+           reportDefects(send(id, command, meta)),
+         schedule: (id: string, command: Json, meta: Aggregate.SendMeta, due: Aggregate.Due) =>
+           Effect.gen(function* () {
++            yield* ensurePresent(state);
+             if (yield* executed(meta.commandId)) return "AlreadyExecuted" as const;
+             const token = yield* Effect.sync(() => crypto.randomUUID());
+             const at =
+@@ -872,6 +905,7 @@ const aggregateObject = (
+         // A live read of this instance: accept its WebSocket, then push on every commit.
+         fetch: accept((id, subscription) =>
+           Effect.gen(function* () {
++            yield* ensurePresent(state);
+             const current = yield* currentMeta;
+             const events =
+               subscription.mode === "events" ? yield* eventsAfter(subscription.cursor) : [];
+@@ -1059,9 +1093,11 @@ const viewObject = (
+           });
+         });
+       return {
++        ...maintenance(state),
+         receive: (key: string, deliveries: ReadonlyArray<Delivery>) =>
+           reportDefects(
+             Effect.gen(function* () {
++              if (yield* state.storage.get("deleted")) return;
+               yield* ensureRegistered(net, { source: kit.name, id: key });
+               // While a backfill runs, the key buffers deliveries and merges them in order.
+               if (!(yield* consumerFor(key).admit(target, deliveries))) return;
+@@ -1069,7 +1105,7 @@ const viewObject = (
+               yield* flushAfter;
+             }),
+           ),
+-        read: () => reportDefects(read),
++        read: () => reportDefects(ensurePresent(state).pipe(Effect.andThen(read))),
+         after: (after: number) => reportDefects(entriesAfter(after)),
+         // The backfill protocol, as a source, a consumer and a scanner.
+         ...scannerRpc(() => scannerFor()),
+@@ -1113,6 +1149,7 @@ const viewObject = (
+         // A live read of this key: accept its WebSocket, then push on every commit.
+         fetch: accept((key, subscription) =>
+           Effect.gen(function* () {
++            yield* ensurePresent(state);
+             const snapshot = yield* read;
+             const entries =
+               subscription.mode === "events" ? yield* entriesAfter(subscription.cursor) : [];
+@@ -1130,6 +1167,7 @@ const policyObject = (kit: PolicyKit) =>
+     return Effect.gen(function* () {
+       const inbox = yield* queue<Delivery>("inbox", kit.run);
+       return {
++        ...maintenance(state),
+         receive: (delivery: Delivery) =>
+           reportDefects(
+             Effect.gen(function* () {
+@@ -1137,6 +1175,7 @@ const policyObject = (kit: PolicyKit) =>
+               const accepted = yield* exclusively(
+                 state.storage.transaction(
+                   Effect.gen(function* () {
++                    if (yield* state.storage.get("deleted")) return false;
+                     if (yield* state.storage.get(`seen:${id}`)) return false;
+                     yield* state.storage.put(`seen:${id}`, true);
+                     yield* inbox.stage([delivery]);
+@@ -1524,6 +1563,7 @@ const durableObjectPlatform = (
+   /** The Domain version to lay models out with: `undefined` for the layout from before versions. */
+   version: number | undefined,
+   legacySagas: Map<string, string>,
++  extend: AggregateExtension,
+ ): Layer.Layer<Platform, never, Worker> =>
+   Layer.effect(
+     Platform,
+@@ -1625,8 +1665,8 @@ const durableObjectPlatform = (
+           const complete = new Set<string>();
+           const net: Backfill.Network = {
+             node: {
+-              register: (path, ref) => unwrapDefects(nodeStub(path).register(path, ref)),
+-              child: (path, child) => unwrapDefects(nodeStub(path).child(path, child)),
++              register: (path, ref) => unwrapDefects(() => nodeStub(path).register(path, ref)),
++              child: (path, child) => unwrapDefects(() => nodeStub(path).child(path, child)),
+               list: (path, after) => callOnce(nodeStub(path).list(path, after)),
+             },
+             source: {
+@@ -1753,7 +1793,7 @@ const durableObjectPlatform = (
+                         `begin-${target}`,
+                         reachable(
+                           Effect.flatMap(root(target), (stub) =>
+-                            unwrapDefects<Backfill.Begin>(stub.bfRunBegin(target, plans[target]!)),
++                            unwrapDefects<Backfill.Begin>(() => stub.bfRunBegin(target, plans[target]!)),
+                           ),
+                         ),
+                         { retries: REACH_RETRIES },
+@@ -1775,7 +1815,7 @@ const durableObjectPlatform = (
+                         reachable(
+                           Effect.forEach(targets, (target) =>
+                             Effect.flatMap(root(target), (stub) =>
+-                              unwrapDefects<Backfill.Progress>(stub.bfRunProgress(target)),
++                              unwrapDefects<Backfill.Progress>(() => stub.bfRunProgress(target)),
+                             ),
+                           ),
+                         ),
+@@ -1817,7 +1857,7 @@ const durableObjectPlatform = (
+                 Effect.gen(function* () {
+                   const namespace = yield* object(
+                     `${aggregate.aggregateName}Aggregate`,
+-                    aggregateObject(kit, net, current, consumerPlans),
++                    aggregateObject(kit, net, current, consumerPlans, extend),
+                   );
+                   sources.set(named(`${aggregate.aggregateName}Aggregate`), namespace);
+                   return {
+@@ -1825,14 +1865,14 @@ const durableObjectPlatform = (
+                       announce.pipe(
+                         Effect.andThen(
+                           unwrapDefects<SendResult>(
+-                            namespace.getByName(id).send(id, command, meta),
++                            () => namespace.getByName(id).send(id, command, meta),
+                           ),
+                         ),
+                       ),
+                     // The object answers with a tag (RPC loses typed failures); fail with it here.
+                     schedule: (id, command, meta, due) =>
+                       unwrapDefects<{ readonly at: number } | "AlreadyExecuted">(
+-                        namespace.getByName(id).schedule(id, command, meta, due),
++                        () => namespace.getByName(id).schedule(id, command, meta, due),
+                       ).pipe(
+                         Effect.flatMap((outcome) =>
+                           outcome === "AlreadyExecuted"
+@@ -1849,7 +1889,7 @@ const durableObjectPlatform = (
+                     unschedule: (id, commandId) =>
+                       unwrapDefects<
+                         "Cancelled" | "AlreadyCancelled" | "AlreadyExecuted" | "NotScheduled"
+-                      >(namespace.getByName(id).unschedule(commandId)).pipe(
++                      >(() => namespace.getByName(id).unschedule(commandId)).pipe(
+                         Effect.flatMap(
+                           (
+                             outcome,
+@@ -1872,7 +1912,7 @@ const durableObjectPlatform = (
+                       announce.pipe(
+                         Effect.andThen(
+                           unwrapDefects<{ state: Json; version: number }>(
+-                            namespace.getByName(id).state(),
++                            () => namespace.getByName(id).state(),
+                           ),
+                         ),
+                       ),
+@@ -1880,7 +1920,7 @@ const durableObjectPlatform = (
+                     changes: (id) =>
+                       Stream.fromEffectSchedule(
+                         unwrapDefects<{ state: Json; version: number }>(
+-                          namespace.getByName(id).state(),
++                          () => namespace.getByName(id).state(),
+                         ),
+                         POLL,
+                       ).pipe(Stream.changesWith((a, b) => a.version === b.version)),
+@@ -1889,7 +1929,7 @@ const durableObjectPlatform = (
+                         from,
+                         (cursor) =>
+                           unwrapDefects<ReadonlyArray<StoredEvent>>(
+-                            namespace.getByName(id).after(cursor),
++                            () => namespace.getByName(id).after(cursor),
+                           ),
+                         (event) => event.envelope.seq,
+                       ),
+@@ -1970,7 +2010,7 @@ const durableObjectPlatform = (
+                     announce.pipe(
+                       Effect.andThen(
+                         orComputed(
+-                          unwrapDefects<ViewSnapshot>(namespace.getByName(key).read()),
++                          unwrapDefects<ViewSnapshot>(() => namespace.getByName(key).read()),
+                           (result) => result.snapshot,
+                           key,
+                         ),
+@@ -1979,14 +2019,14 @@ const durableObjectPlatform = (
+                   const after = (key: string, cursor: number) =>
+                     orComputed(
+                       unwrapDefects<ReadonlyArray<ViewEntry>>(
+-                        namespace.getByName(key).after(cursor),
++                        () => namespace.getByName(key).after(cursor),
+                       ),
+                       (result) => result.entries.filter((entry) => entry.seq > cursor),
+                       key,
+                     );
+                   return {
+                     receive: (key, deliveries) =>
+-                      unwrapDefects(namespace.getByName(key).receive(key, deliveries)),
++                      unwrapDefects(() => namespace.getByName(key).receive(key, deliveries)),
+                     read,
+                     // Streamed responses poll; WebSocket reads (`connect`) are pushed on commit.
+                     changes: (key) =>
+@@ -2035,11 +2075,11 @@ const durableObjectPlatform = (
+                   return {
+                     receive: (delivery) =>
+                       unwrapDefects(
+-                        namespace.getByName(delivery.key).receive(delivery.key, delivery),
++                        () => namespace.getByName(delivery.key).receive(delivery.key, delivery),
+                       ),
+                     checkpoints: (key) =>
+                       unwrapDefects<Readonly<Record<string, number>>>(
+-                        namespace.getByName(key).checkpoints(),
++                        () => namespace.getByName(key).checkpoints(),
+                       ),
+                   };
+                 }),
+@@ -2049,16 +2089,16 @@ const durableObjectPlatform = (
+                 Effect.gen(function* () {
+                   const namespace = yield* object(`${stream.streamName}Stream`, streamObject(kit));
+                   const read = (key: string) =>
+-                    unwrapDefects<StreamMeta>(namespace.getByName(key).read());
++                    unwrapDefects<StreamMeta>(() => namespace.getByName(key).read());
+                   const after = (key: string, cursor: number) =>
+                     unwrapDefects<ReadonlyArray<StreamEntry>>(
+-                      namespace.getByName(key).after(cursor),
++                      () => namespace.getByName(key).after(cursor),
+                     );
+                   return {
+                     append: (key, write) =>
+-                      unwrapDefects(namespace.getByName(key).append(key, write)),
++                      unwrapDefects(() => namespace.getByName(key).append(key, write)),
+                     advance: (key, checkpoints) =>
+-                      unwrapDefects(namespace.getByName(key).advance(checkpoints)),
++                      unwrapDefects(() => namespace.getByName(key).advance(checkpoints)),
+                     read,
+                     // Streamed responses poll; WebSocket reads (`connect`) are pushed on append.
+                     changes: (key) =>
+@@ -2128,7 +2168,7 @@ const durableObjectPlatform = (
+                   const namespace = yield* object(`${policy.policyName}Policy`, policyObject(kit));
+                   return {
+                     receive: (delivery) =>
+-                      unwrapDefects(namespace.getByName(delivery.key).receive(delivery)),
++                      unwrapDefects(() => namespace.getByName(delivery.key).receive(delivery)),
+                   };
+                 }),
+               ),
+@@ -2257,6 +2297,7 @@ const durableObjectPlatform = (
+ export function layerDurableObjects({
+   jurisdiction,
+   backfillTimeout,
++  extend = noExtension,
+ }: DurableObjectsOptions = {}): Layer.Layer<
+   Platform | WorkflowEngine.WorkflowEngine,
+   never,
+@@ -2267,9 +2308,11 @@ export function layerDurableObjects({
+   // The same options return the same Layer, so models that each provide it
+   // share one platform and one workflow engine.
+   const key = `${jurisdiction ?? ""}|${timeoutSeconds ?? ""}`;
+-  let platform = platforms.get(key);
++  let configured = platforms.get(extend);
++  if (configured === undefined) platforms.set(extend, configured = new Map());
++  let platform = configured.get(key);
+   if (platform === undefined)
+-    platforms.set(
++    configured.set(
+       key,
+       (platform = Layer.unwrap(
+         Effect.gen(function* () {
+@@ -2277,7 +2320,7 @@ export function layerDurableObjects({
+           const engine = layerDurableObjectEngine({ jurisdiction });
+           const legacySagas = new Map<string, string>();
+           return Layer.merge(
+-            durableObjectPlatform(jurisdiction, timeoutSeconds, version, legacySagas),
++            durableObjectPlatform(jurisdiction, timeoutSeconds, version, legacySagas, extend),
+             version === undefined ? legacyEngine(legacySagas).pipe(Layer.provide(engine)) : engine,
+           );
+         }),
+@@ -2321,6 +2364,8 @@ const legacyEngine = (
+ 
+ /** Options for {@link layerDurableObjects}. */
+ export interface DurableObjectsOptions {
++  /** Application-only service-binding RPCs; never exposed by Domain.Api. */
++  readonly extend?: AggregateExtension;
+   /**
+    * Create and store every Durable Object of the model (aggregates, views,
+    * policies, projections, streams and saga executions) only inside this
+@@ -2350,7 +2395,8 @@ export interface DurableObjectsOptions {
+   readonly backfillTimeout?: Duration.Input;
+ }
+ 
+-const platforms = new Map<
++const noExtension: AggregateExtension = () => Effect.succeed({});
++const platforms = new WeakMap<AggregateExtension, Map<
+   string,
+   Layer.Layer<Platform | WorkflowEngine.WorkflowEngine, never, Worker>
+->();
++>>();

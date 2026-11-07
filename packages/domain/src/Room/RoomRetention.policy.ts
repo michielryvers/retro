@@ -30,7 +30,7 @@ export const RoomRetentionLive = RoomRetention.toLayer(
         })),
         Match.tag("RoomDeletionRequested", (event) => cleanup.remove({ id: source.id, title: event.title })),
         Match.exhaustive,
-      );
+      ).pipe(Effect.catchTag("AlreadyExecuted", () => Effect.void));
     });
   }),
 );

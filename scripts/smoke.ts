@@ -35,28 +35,11 @@ const room = RoomId.make(crypto.randomUUID());
 await Effect.runPromise(
   Effect.gen(function* () {
     const api = yield* RetroApi.client;
-    yield* api.CreateRoom(
-      {
-        template: "mad-sad-glad",
-        password: Redacted.make(testPassword),
-        target: room,
-        title: "Deployment verification",
-        name: "QA facilitator",
-      },
-      host,
-    );
+    yield* api.CreateRoom(room, { template: "mad-sad-glad", password: Redacted.make(testPassword), title: "Deployment verification", name: "QA facilitator" }, host);
     guest.id = yield* joinInvited(api, room, "QA teammate", host, guest);
     host.id = (yield* api.SharedBoard.get(room, host))!.adminId;
 
-    const saved = yield* api.SaveNote(
-      {
-        target: room,
-        id: "test-note",
-        column: "glad",
-        text: "Verified private note",
-      },
-      guest,
-    );
+    const saved = yield* api.SaveNote(room, { id: "test-note", column: "glad", text: "Verified private note" }, guest);
 
     console.log("Checking shared note projection");
 
@@ -78,17 +61,14 @@ await Effect.runPromise(
     console.log("Checking permissions and voting");
 
     const denied = yield* api
-      .RevealNotes({ target: room }, guest)
+      .RevealNotes(room, {}, guest)
       .pipe(Effect.flip);
 
     assert.equal(denied._tag, "Refused");
-    yield* api.RevealNotes({ target: room }, host);
-    yield* api.StartVoting({ target: room }, host);
+    yield* api.RevealNotes(room, {}, host);
+    yield* api.StartVoting(room, {}, host);
 
-    const voted = yield* api.SetVote(
-      { target: room, noteId: "test-note", selected: true },
-      guest,
-    );
+    const voted = yield* api.SetVote(room, { noteId: "test-note", selected: true }, guest);
 
     assert.equal(
       (yield* api.SharedBoard.get(room, { ...host, atLeast: voted }))?.scores
@@ -96,25 +76,15 @@ await Effect.runPromise(
       0,
     );
     console.log("Checking final voting projection");
-    const finished = yield* api.FinishVoting({ target: room }, host);
+    const finished = yield* api.FinishVoting(room, {}, host);
     assert.equal(
       (yield* api.SharedBoard.get(room, { ...guest, atLeast: finished }))
         ?.scores[0]?.count,
       1,
     );
-    yield* api.SaveAction(
-      {
-        target: room,
-        id: "test-action",
-        noteId: "test-note",
-        text: "Try the next retrospective",
-        ownerId: guest.id,
-        dueDate: "",
-      },
-      host,
-    );
+    yield* api.SaveAction(room, { id: "test-action", noteId: "test-note", text: "Try the next retrospective", ownerId: guest.id, dueDate: "" }, host);
     console.log("Checking closed room");
-    const closed = yield* api.CloseRoom({ target: room }, host);
+    const closed = yield* api.CloseRoom(room, {}, host);
 
     const final = yield* api.SharedBoard.get(room, {
       ...guest,

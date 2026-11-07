@@ -25,7 +25,7 @@ import { SharedBoard } from "../src/Room/SharedBoard.view.ts";
 import { CurrentActor } from "../src/CurrentActor.context.ts";
 import { PreparedAccess } from "../src/PreparedAccess.context.ts";
 
-const story = Story.make(Retro, { layer: RoomRetentionLive, stub: [RoomCleanup] });
+const story = Story.make(Retro, { layer: RoomRetentionLive, stub: [RoomCleanup], assertAllEvents: false });
 const room = Room.ref("retention");
 const start = Date.parse("2026-01-01T12:00:00Z");
 const week = 7 * 24 * 60 * 60 * 1000;

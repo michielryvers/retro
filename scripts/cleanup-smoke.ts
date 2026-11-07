@@ -33,28 +33,11 @@ const host = await session(),
 await Effect.runPromise(
   Effect.gen(function* () {
     const api = yield* RetroApi.client;
-    yield* api.CreateRoom(
-      {
-        password: Redacted.make(testPassword),
-        target: room,
-        title,
-        name: "QA host",
-        template: "keep-drop-try",
-      },
-      host,
-    );
+    yield* api.CreateRoom(room, { password: Redacted.make(testPassword), title, name: "QA host", template: "keep-drop-try" }, host);
     guest.id = yield* joinInvited(api, room, "QA guest", host, guest);
     host.id = (yield* api.SharedBoard.get(room, host))!.adminId;
 
-    const receipt = yield* api.SaveNote(
-      {
-        target: room,
-        id: "private",
-        column: "keep",
-        text: "Private deletion fixture",
-      },
-      guest,
-    );
+    const receipt = yield* api.SaveNote(room, { id: "private", column: "keep", text: "Private deletion fixture" }, guest);
 
     yield* api.MyNotes.get(RoomId.make(`${room}:${guest.id}`), {
       ...guest,
@@ -79,21 +62,11 @@ await Effect.runPromise(
       403,
       "active rooms cannot be deleted",
     );
-    yield* api.RevealNotes({ target: room }, host);
-    yield* api.StartVoting({ target: room }, host);
-    yield* api.FinishVoting({ target: room }, host);
-    yield* api.SaveAction(
-      {
-        target: room,
-        id: "action",
-        noteId: "private",
-        text: "Follow up",
-        ownerId: guest.id,
-        dueDate: "",
-      },
-      host,
-    );
-    yield* api.CloseRoom({ target: room }, host);
+    yield* api.RevealNotes(room, {}, host);
+    yield* api.StartVoting(room, {}, host);
+    yield* api.FinishVoting(room, {}, host);
+    yield* api.SaveAction(room, { id: "action", noteId: "private", text: "Follow up", ownerId: guest.id, dueDate: "" }, host);
+    yield* api.CloseRoom(room, {}, host);
     assert.equal(
       (yield* remove(guest)).status,
       403,
@@ -101,15 +74,12 @@ await Effect.runPromise(
     );
 
     const denied = yield* api
-      .ArchiveRoom({ target: room, archived: true }, guest)
+      .ArchiveRoom(room, { archived: true }, guest)
       .pipe(Effect.flip);
 
     assert.equal(denied._tag, "Refused");
 
-    const archived = yield* api.ArchiveRoom(
-      { target: room, archived: true },
-      host,
-    );
+    const archived = yield* api.ArchiveRoom(room, { archived: true }, host);
 
     assert.equal(
       (yield* api.SharedBoard.get(room, { ...guest, atLeast: archived }))
@@ -118,14 +88,14 @@ await Effect.runPromise(
     );
 
     const locked = yield* api
-      .DeleteAction({ target: room, id: "action" }, guest)
+      .DeleteAction(room, { id: "action" }, guest)
       .pipe(Effect.flip);
 
     assert.equal(locked._tag, "Refused");
-    yield* api.ArchiveRoom({ target: room, archived: false }, host);
+    yield* api.ArchiveRoom(room, { archived: false }, host);
     assert.equal(
       (yield* api
-        .DeleteAction({ target: room, id: "action" }, guest)
+        .DeleteAction(room, { id: "action" }, guest)
         .pipe(Effect.flip))._tag,
       "Refused",
     );
@@ -144,25 +114,8 @@ await Effect.runPromise(
 
     // Every public route must remain unusable, even to an existing participant.
     const blockedCalls: Effect.Effect<unknown, unknown>[] = [
-      api.JoinRoom(
-        {
-          target: room,
-          participantId: guest.id,
-          token: Redacted.make("0".repeat(64)),
-          password: Redacted.make(testPassword),
-        },
-        guest,
-      ),
-      api.CreateRoom(
-        {
-          template: "mad-sad-glad",
-          password: Redacted.make(testPassword),
-          target: room,
-          title,
-          name: "reuse",
-        },
-        host,
-      ),
+      api.JoinRoom(room, { participantId: guest.id, token: Redacted.make("0".repeat(64)), password: Redacted.make(testPassword) }, guest),
+      api.CreateRoom(room, { template: "mad-sad-glad", password: Redacted.make(testPassword), title, name: "reuse" }, host),
       api.SharedBoard.get(room, host),
       api.MyNotes.get(RoomId.make(`${room}:${guest.id}`), guest),
     ];

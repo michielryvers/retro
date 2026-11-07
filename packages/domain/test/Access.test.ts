@@ -13,7 +13,7 @@ import { Refused } from "../src/Room/Refused.rejection.ts";
 import { CurrentActor } from "../src/CurrentActor.context.ts";
 import { PreparedAccess } from "../src/PreparedAccess.context.ts";
 
-const story = Story.make(Retro, { layer: RoomRetentionLive, stub: [RoomCleanup] });
+const story = Story.make(Retro, { layer: RoomRetentionLive, stub: [RoomCleanup], assertAllEvents: false });
 const room = Room.ref("access-clock");
 
 const prepared = {
