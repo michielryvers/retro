@@ -24,8 +24,33 @@ jobs:
       - run: bun run test
       - run: bun run build
 
-  deploy:
+  live:
     needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.4"
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - name: Check live synchronization with two local browsers
+        env:
+          CI: "true"
+        run: |
+          bun run dev --stage ci-live --no-input > "$RUNNER_TEMP/retro-live.log" 2>&1 &
+          app=$!
+          trap 'kill -TERM "$app" 2>/dev/null || true' EXIT
+          if ! curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 2 --output /dev/null http://localhost:1337/api/session ||
+             ! curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 2 --output /dev/null http://localhost:5187/api/session ||
+             ! bun run test:live; then
+            cat "$RUNNER_TEMP/retro-live.log"
+            exit 1
+          fi
+
+  deploy:
+    needs: [check, live]
     if: github.repository == 'michielryvers/retro' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20

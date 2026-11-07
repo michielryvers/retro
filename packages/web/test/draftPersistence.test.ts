@@ -168,7 +168,7 @@ it("clears the local backup when a room is deleted", () => {
     Message.Field({ field: "draft", value: "Private" }),
   ).model;
 
-  updateWithDrafts(model, Message.RoomUnavailable());
+  updateWithDrafts(model, Message.RoomUnavailable({}));
   expect(stored).toEqual({});
 });
 

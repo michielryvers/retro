@@ -133,6 +133,8 @@ export const Model = Schema.Struct({
   invite: Schema.Boolean,
   confirm: Schema.String,
   connected: Schema.Boolean,
+  boardLive: Schema.Boolean,
+  privateLive: Schema.Boolean,
   reconnect: Schema.Int,
 });
 
@@ -142,7 +144,7 @@ export const Message = defineMessageUnion({
   PreviewLoaded: { preview: Schema.NullOr(InvitationPreview) },
   Tools: {},
   TogglePassword: {},
-  RoomUnavailable: {},
+  RoomUnavailable: { epoch: Schema.optionalKey(Schema.Int) },
   CheckRoom: {},
   ClearNotice: { text: Schema.String },
   InvitesFailed: { reason: Schema.String },
@@ -172,10 +174,14 @@ export const Message = defineMessageUnion({
     board: BoardState,
     links: Schema.optionalKey(Schema.Array(InviteLink)),
   },
-  Board: { board: Schema.NullOr(BoardState) },
-  Private: { state: Schema.NullOr(PrivateState) },
+  Board: { board: Schema.NullOr(BoardState), epoch: Schema.optionalKey(Schema.Int) },
+  Private: { state: Schema.NullOr(PrivateState), epoch: Schema.optionalKey(Schema.Int) },
   Failed: { reason: Schema.String },
-  WatchFailed: { reason: Schema.String },
+  WatchFailed: {
+    reason: Schema.String,
+    source: Schema.optionalKey(Schema.Literals(["board", "private"])),
+    epoch: Schema.optionalKey(Schema.Int),
+  },
   Edit: { column: Column, id: Schema.String, text: Schema.String },
   CancelEdit: {},
   Select: { id: Schema.String },
@@ -288,7 +294,7 @@ export const Enter = Command.define("EnterRoom", {
       Effect.catchCause((cause) =>
         Effect.succeed(
           Cause.pretty(cause).includes("permanently deleted")
-            ? Message.RoomUnavailable()
+            ? Message.RoomUnavailable({})
             : Message.Failed({
                 reason: explain(Cause.squash(cause)).includes(
                   "already signed in as someone else",
@@ -349,7 +355,7 @@ const Resume = Command.define("ResumeRoom", {
       Effect.catchCause((cause) =>
         Effect.succeed(
           Cause.pretty(cause).includes("permanently deleted")
-            ? Message.RoomUnavailable()
+            ? Message.RoomUnavailable({})
             : Message.NeedsJoin(),
         ),
       ),
@@ -786,6 +792,8 @@ export const init = (
     invite: false,
     confirm: "",
     connected: false,
+    boardLive: false,
+    privateLive: false,
     reconnect: 0,
   },
   commands: f.roomId
@@ -804,21 +812,41 @@ export const init = (
     : [],
 });
 
+const restartLive = (m: Model): Model => ({
+  ...m,
+  reconnect: m.reconnect + 1,
+  connected: false,
+  boardLive: false,
+  privateLive: false,
+});
+
 export const update = (
   m: Model,
   msg: Message,
 ): Update.Return<Model, Message, Services> => {
+  // An interrupted subscription may already have enqueued a frame/failure.
+  // It must not overwrite a fresh snapshot or stop recovery for the next one.
+  const epoch = Match.value(msg).pipe(
+    Match.tags({
+      Board: (message) => message.epoch,
+      Private: (message) => message.epoch,
+      WatchFailed: (message) => message.epoch,
+      RoomUnavailable: (message) => message.epoch,
+    }),
+    Match.orElse(() => undefined),
+  );
+
+  if (epoch !== undefined && epoch !== m.reconnect) return { model: m };
+
   return Match.value(msg).pipe(
     Match.tagsExhaustive({
       PreviewLoaded: (msg) => ({
         model: m.entered ? m : { ...m, invitationPreview: msg.preview },
       }),
       CheckRoom: () => ({
-        model: m,
-        commands:
-          m.entered && !m.busy
-            ? [Resume({ roomId: m.roomId, invitation: true })]
-            : [],
+        // Re-subscribe on tab return: an open socket can still be stale, and
+        // an HTTP existence check says nothing about its ability to push data.
+        model: m.entered && !m.busy && !m.unavailable ? restartLive(m) : m,
       }),
       TogglePassword: () => ({
         model: { ...m, showPassword: !m.showPassword },
@@ -829,6 +857,8 @@ export const update = (
           unavailable: true,
           entered: false,
           connected: false,
+          boardLive: false,
+          privateLive: false,
           busy: false,
           board: null,
         },
@@ -1150,6 +1180,8 @@ export const update = (
         };
       },
       Entered: (msg): Update.Return<Model, Message, Services> => {
+        const sameRoom = m.entered && m.roomId === msg.roomId;
+
         return {
           model: {
             ...m,
@@ -1165,6 +1197,7 @@ export const update = (
                 ? "Could not load invitations. Please retry."
                 : "",
             board: msg.board,
+            private: sameRoom ? m.private : { notes: [], votes: [], sessions: [] },
             mobileColumn: columnsFor(msg.board?.template).some(
               (c) => c.id === m.mobileColumn,
             )
@@ -1192,7 +1225,11 @@ export const update = (
             screen: "board",
             entered: true,
             busy: false,
-            connected: true,
+            // HTTP entry is not proof that either live subscription is ready.
+            boardLive: sameRoom && m.boardLive,
+            privateLive: sameRoom && m.privateLive,
+            connected: sameRoom && m.boardLive && m.privateLive,
+            reconnect: m.entered && !sameRoom ? m.reconnect + 1 : m.reconnect,
             error: "",
           },
           commands: m.entered ? [] : [EnterRoomViewport({})],
@@ -1227,13 +1264,17 @@ export const update = (
               msg.board?.notes.some((n) => n.id === m.mergeTarget)
                 ? m.mergeTarget
                 : "",
+            selected: msg.board?.notes.some((n) => n.id === m.selected) ? m.selected : "",
+            dragSource: msg.board?.phase === "reveal" && msg.board.notes.some((n) => n.id === m.dragSource) ? m.dragSource : "",
+            dropTarget: msg.board?.phase === "reveal" && msg.board.notes.some((n) => n.id === m.dropTarget) ? m.dropTarget : "",
             screen: "board",
             voteSort:
               msg.board?.phase === "actions" && m.board?.phase !== "actions"
                 ? "highest"
                 : m.voteSort,
-            connected: true,
-            error: m.connected ? m.error : "",
+            boardLive: msg.board !== null,
+            connected: msg.board !== null && m.privateLive,
+            error: !m.connected && m.privateLive && msg.board !== null ? "" : m.error,
             confirm: msg.board?.phase !== m.board?.phase ? "" : m.confirm,
           },
         };
@@ -1243,6 +1284,9 @@ export const update = (
           model: {
             ...m,
             private: msg.state ?? { notes: [], votes: [], sessions: [] },
+            privateLive: msg.state !== null,
+            connected: msg.state !== null && m.boardLive,
+            error: !m.connected && m.boardLive && msg.state !== null ? "" : m.error,
           },
         };
       },
@@ -1254,6 +1298,8 @@ export const update = (
               unavailable: true,
               entered: false,
               connected: false,
+              boardLive: false,
+              privateLive: false,
               busy: false,
               board: null,
             },
@@ -1273,10 +1319,13 @@ export const update = (
       },
       WatchFailed: (msg): Update.Return<Model, Message, Services> => {
         return {
-          model: { ...m, connected: false, error: msg.reason },
-          commands: m.roomId
-            ? [Resume({ roomId: m.roomId, invitation: true })]
-            : [],
+          model: {
+            ...m, connected: false, error: msg.reason,
+            boardLive: msg.source === "private" && m.boardLive,
+            privateLive: msg.source === "board" && m.privateLive,
+          },
+          // Keep the existing five-second recovery/backoff active until both
+          // subscriptions deliver again; HTTP success cannot satisfy that.
         };
       },
       Edit: (msg): Update.Return<Model, Message, Services> => {
@@ -1454,12 +1503,7 @@ export const update = (
       },
       Retry: (): Update.Return<Model, Message, Services> => {
         return {
-          model: {
-            ...m,
-            reconnect: m.reconnect + 1,
-            error: "",
-            connected: false,
-          },
+          model: m.entered && !m.unavailable ? restartLive(m) : m,
         };
       },
       Run: (msg): Update.Return<Model, Message, Services> => {
@@ -1592,7 +1636,13 @@ export const subscriptions = Subscription.make<Model, Message, Services>()(
         modelToDependencies: (m) => ({ active: m.entered }),
         dependenciesToStream: ({ active }) =>
           active
-            ? Stream.fromEventListener(window, "focus").pipe(
+            ? Stream.merge(
+                Stream.fromEventListener(window, "focus"),
+                Stream.fromEventListener(document, "visibilitychange").pipe(
+                  Stream.filter(() => document.visibilityState === "visible"),
+                ),
+              ).pipe(
+                Stream.debounce("100 millis"),
                 Stream.map(() => Message.CheckRoom()),
               )
             : Stream.empty,
@@ -1636,7 +1686,7 @@ export const subscriptions = Subscription.make<Model, Message, Services>()(
           entered: m.entered,
           reconnect: m.reconnect,
         }),
-        dependenciesToStream: ({ roomId, entered }) =>
+        dependenciesToStream: ({ roomId, entered, reconnect }) =>
           entered
             ? Stream.unwrap(
                 Effect.gen(function* () {
@@ -1645,12 +1695,13 @@ export const subscriptions = Subscription.make<Model, Message, Services>()(
                   return api.SharedBoard.watch(RoomId.make(roomId));
                 }),
               ).pipe(
-                Stream.map(({ state: board }) => Message.Board({ board })),
+                Stream.map(({ state: board }) => Message.Board({ board, epoch: reconnect })),
                 Stream.catchCause((e) =>
                   Stream.succeed(
                     Cause.pretty(e).includes("permanently deleted")
-                      ? Message.RoomUnavailable()
+                      ? Message.RoomUnavailable({ epoch: reconnect })
                       : Message.WatchFailed({
+                          source: "board", epoch: reconnect,
                           reason: "Connection interrupted. Reconnecting…",
                         }),
                   ),
@@ -1673,7 +1724,7 @@ export const subscriptions = Subscription.make<Model, Message, Services>()(
           entered: m.entered,
           reconnect: m.reconnect,
         }),
-        dependenciesToStream: ({ roomId, actorId, entered }) =>
+        dependenciesToStream: ({ roomId, actorId, entered, reconnect }) =>
           entered
             ? Stream.unwrap(
                 Effect.gen(function* () {
@@ -1682,12 +1733,13 @@ export const subscriptions = Subscription.make<Model, Message, Services>()(
                   return api.MyNotes.watch(RoomId.make(`${roomId}:${actorId}`));
                 }),
               ).pipe(
-                Stream.map(({ state }) => Message.Private({ state })),
+                Stream.map(({ state }) => Message.Private({ state, epoch: reconnect })),
                 Stream.catchCause((e) =>
                   Stream.succeed(
                     Cause.pretty(e).includes("permanently deleted")
-                      ? Message.RoomUnavailable()
+                      ? Message.RoomUnavailable({ epoch: reconnect })
                       : Message.WatchFailed({
+                          source: "private", epoch: reconnect,
                           reason: "Connection interrupted. Reconnecting…",
                         }),
                   ),

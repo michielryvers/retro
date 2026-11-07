@@ -14,6 +14,7 @@
     "smoke": "bun scripts/smoke.ts",
     "lint": "oxlint .",
     "test:integration": "bun scripts/smoke.ts && bun scripts/facilitation-smoke.ts && bun scripts/cleanup-smoke.ts && bun scripts/admin-smoke.ts && bun scripts/websocket-smoke.ts && bun scripts/archive-smoke.ts",
+    "test:live": "bun scripts/live-combining-smoke.ts",
     "screenshots": "bun scripts/screenshots/capture.ts"
   },
   "dependencies": {

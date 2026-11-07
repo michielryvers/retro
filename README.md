@@ -52,6 +52,7 @@ bun run test
 bun run build
 bun run test:integration # with the dev server running
 bunx playwright install chromium
+bun run test:live # two real browser sessions against the running local server
 bun run screenshots
 ```
 
@@ -76,7 +77,7 @@ bun run deploy --stage prod --no-input --yes
 
 The token needs Workers Scripts Write, Account Settings Read, Secrets Store Write, and Access: Apps and Policies Write on the account, plus Zone Read, DNS Write, and Workers Routes Write on the site’s zone. See [Alchemy’s CI guide](https://alchemy.run/environments/ci/) for credentials and state setup.
 
-Pushes to `main` run checks and then deploy. Pull requests run checks without deployment credentials. Production deployments run one at a time. For a fork, update the repository guard in the workflow and allow `main` in your `production` environment.
+Pushes to `main` run checks and a two-browser local live-synchronization regression before deploying. Pull requests run the same checks without deployment credentials. Production deployments run one at a time. For a fork, update the repository guard in the workflow and allow `main` in your `production` environment.
 
 The deployment check reads the deployed frontend's Worker name from stack outputs, resolves the account's `workers.dev` subdomain, and checks the app HTML, built JavaScript, and backend session endpoint. It also checks the custom domain. A confirmed Cloudflare bot challenge (`403` with `cf-mitigated: challenge`) there produces a warning, not a false deployment failure; all other errors still fail. No WAF or admin-access rules are relaxed.
 
