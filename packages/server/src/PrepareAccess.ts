@@ -6,6 +6,7 @@ import { RoomId } from "@retro/domain/Room/Room.id";
 import { Refused } from "@retro/domain/Room/Refused.rejection";
 import { sameSecret } from "@retro/domain/Room/Access";
 import { randomSecret, inviteToken, passwordHash } from "./Secrets.ts";
+import { SHARED_INVITATION } from "@retro/domain/Room/SharedInvitation";
 
 export const AccessPayload = Schema.Struct({
   target: RoomId,
@@ -38,7 +39,7 @@ export const prepareAccess = Effect.fn(function* (
 
   if (tag === "InviteParticipant") return { ...empty, id: crypto.randomUUID() };
 
-  if (tag !== "CreateRoom" && tag !== "JoinRoom") return empty;
+  if (tag !== "CreateRoom" && tag !== "JoinRoom" && tag !== "JoinSharedRoom") return empty;
 
   if (!input) return yield* new Refused({ reason: "Invalid credentials." });
 
@@ -71,12 +72,12 @@ export const prepareAccess = Effect.fn(function* (
 
   if (
     room.lifecycle !== "created" ||
-    !room.invitations.some((p) => p.id === input.participantId)
+    (tag !== "JoinSharedRoom" && !room.invitations.some((p) => p.id === input.participantId))
   )
     return empty;
 
-  if (!input.token || !input.participantId) return empty;
-  const participantId = input.participantId;
+  if (!input.token || (tag !== "JoinSharedRoom" && !input.participantId)) return empty;
+  const participantId = tag === "JoinSharedRoom" ? SHARED_INVITATION : input.participantId!;
   const token = Redacted.value(input.token);
 
   if (token.length !== 64) return empty;
@@ -93,6 +94,7 @@ export const prepareAccess = Effect.fn(function* (
 
   return {
     ...empty,
+    id: tag === "JoinSharedRoom" ? crypto.randomUUID() : "",
     seed: room.inviteSeed,
     hash: Redacted.make(hash),
     validToken: true,

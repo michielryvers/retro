@@ -8,12 +8,14 @@ A little space for your team to look back, speak up, and decide what to try next
 
 ## From thoughts to next steps
 
-1. **Make a room.** Pick a format, set a password, and invite your teammates with their own links. No accounts to create.
+1. **Make a room.** Pick a format, set a password, and share one invitation link with everyone. Teammates enter their own names. No accounts to create.
 2. **Write privately.** Everyone gets time to think before the notes are revealed together.
 3. **Find the themes.** Combine related notes, then vote on what matters most.
 4. **Leave with a plan.** Turn the conversation into actions with owners, and export the results.
 
-There’s a timer to keep things moving, facilitator handover when you need it, and undo for combined notes. Personal invitations work across devices, so rejoining is easy.
+There’s a timer to keep things moving, facilitator handover when you need it, and undo for combined notes. Reopening a room in the same browser keeps your identity and private notes. To continue on another device, ask the facilitator for **your personal recovery link** under **People & invites → Personal recovery links**. Existing personal invitations still work. Names are display labels, not credentials: entering the same name through the shared link creates a different person, never access to their private notes or facilitator role.
+
+Share the password separately from the invitation link. Five failed shared-link password attempts pause new shared joins for 15 minutes across the room, regardless of names or browser sessions; existing browser access and personal invitations remain available. New shared-link participants cannot join a finished retro.
 
 Facilitators can choose **1–30 votes per person** in **Facilitator controls** (on mobile: **Room menu → Voting**) before voting starts. The default is three. The budget locks during voting; each visible note group can receive at most one vote from each person.
 
@@ -56,6 +58,7 @@ bun run test:integration # with the dev server running
 bunx playwright install chromium
 bun run test:live # two real browser sessions against the running local server
 bun run test:voting # desktop/mobile settings, live budget updates and enforcement
+bun run test:invitations # shared-link joins, private identity isolation and recovery
 bun run screenshots
 ```
 
