@@ -7,6 +7,8 @@ export const demo: Model = {
   actorId: "avery",
   entered: true,
   connected: true,
+  boardLive: true,
+  privateLive: true,
   now: Date.UTC(2026, 0, 1),
   mobileColumn: "stop",
   board: {

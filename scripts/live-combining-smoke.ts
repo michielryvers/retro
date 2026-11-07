@@ -22,6 +22,11 @@ try {
   const errors: string[] = [];
   const hostPage = await hostContext.newPage();
   const guestPage = await guestContext.newPage();
+  let guestNavigations = 0;
+
+  guestPage.on("framenavigated", (frame) => {
+    if (frame === guestPage.mainFrame()) guestNavigations++;
+  });
 
   for (const page of [hostPage, guestPage]) page.on("pageerror", (error) => errors.push(error.message));
 
@@ -34,13 +39,20 @@ try {
 
     return { headers: { cookie: `${cookie.name}=${cookie.value}` } };
   };
+
   const host = await headersFor(hostContext);
   const guest = await headersFor(guestContext);
   let boardSocket: WebSocketRoute | undefined;
+  let privateSocket: WebSocketRoute | undefined;
+  let stalledBoard: WebSocketRoute | undefined;
   let breakBoard = false;
   let refused = 0;
   let exhausted: () => void = () => {};
   const exhaustion = new Promise<void>((resolve) => { exhausted = resolve; });
+  let breakPrivate = false;
+  let privateRefused = 0;
+  let privateExhausted: () => void = () => {};
+  const privateExhaustion = new Promise<void>((resolve) => { privateExhausted = resolve; });
 
   await guestPage.routeWebSocket("**/api?read=*", (route) => {
     const request = new URL(route.url()).searchParams.get("read") ?? "";
@@ -63,7 +75,26 @@ try {
       boardSocket = route;
     }
 
-    route.connectToServer();
+    if (request.includes("MyNotes.watch")) {
+      if (breakPrivate) {
+        route.close({ code: 1011, reason: "Synthetic private-stream failure" });
+        privateRefused++;
+
+        if (privateRefused === 8) {
+          breakPrivate = false;
+          privateExhausted();
+        }
+
+        return;
+      }
+
+      privateSocket = route;
+    }
+
+    const server = route.connectToServer();
+    server.onMessage((message) => {
+      if (route !== stalledBoard) route.send(message);
+    });
   });
 
   await Effect.runPromise(Effect.gen(function* () {
@@ -99,6 +130,18 @@ try {
     yield* api.CombineNotes(room, { sourceId: "a", targetId: "b" }, host);
     yield* Effect.promise(() => guestPage.locator("#note-b .combined-part").nth(1).waitFor());
 
+    // Model a tab returning with a stale but still-open connection. A plain
+    // HTTP existence check cannot restore either live stream or the board.
+    assert.ok(boardSocket);
+    stalledBoard = boardSocket;
+    yield* api.CombineNotes(room, { sourceId: "b", targetId: "c" }, host);
+    assert.equal(yield* Effect.promise(() => guestPage.locator("#note-b").count()), 1);
+    yield* Effect.promise(() => guestPage.evaluate(() => window.dispatchEvent(new Event("focus"))));
+    yield* Effect.promise(() => guestPage.locator("#note-c .combined-part").nth(2).waitFor({ timeout: 8000 }));
+    console.log("Recovered a combined board from a stale open socket on tab return");
+    yield* api.SplitNote(room, { noteId: "c" }, host);
+    yield* Effect.promise(() => guestPage.locator("#note-b .combined-part").nth(1).waitFor());
+
     assert.ok(boardSocket, "participant has a real live-board connection");
     breakBoard = true;
     boardSocket.close({ code: 1011, reason: "Synthetic live-stream failure" });
@@ -113,8 +156,23 @@ try {
     const mine = yield* api.MyNotes.get(RoomId.make(`${room}:${guestId}`), guest);
 
     assert.deepEqual(mine?.votes, ["c"]);
+    yield* api.SetVote(room, { noteId: "c", selected: false }, guest);
+    yield* Effect.promise(() => guestPage.locator('#note-c button.vote[aria-pressed="false"]').waitFor());
+
+    // A live board must not hide a dead private stream. Another tab/device's
+    // vote changes must still arrive without this browser making an HTTP read.
+    assert.ok(privateSocket, "participant has a live private connection");
+    breakPrivate = true;
+    privateSocket.close({ code: 1011, reason: "Synthetic private-stream failure" });
+    console.log("Exhausting only the private stream, then sending a healthy board update");
+    yield* Effect.promise(() => privateExhaustion).pipe(Effect.timeout("60 seconds"));
+    yield* Effect.promise(() => guestPage.locator(".board-tools .connection").filter({ hasText: "Reconnecting" }).waitFor());
+    yield* api.SetTimer(room, { operation: "start", seconds: 60 }, host);
+    yield* api.SetVote(room, { noteId: "c", selected: true }, guest);
+    yield* Effect.promise(() => guestPage.locator('#note-c button.vote[aria-pressed="true"]').waitFor({ timeout: 15000 }));
     assert.deepEqual(errors, []);
-    console.log("Passed two-browser combine/split/undo, exhausted-stream recovery, nested grouping and voting without refreshing");
+    assert.equal(guestNavigations, 1, "participant never refreshes or navigates away to recover");
+    console.log("Passed two-browser combine/split/undo, board and private stream recovery, nested grouping and voting without refreshing");
   }).pipe(
     Effect.provide(Domain.protocolHttp(`${origin.origin}/api`)),
     Effect.provide(FetchHttpClient.layer),
