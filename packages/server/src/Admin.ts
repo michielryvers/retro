@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { makeRpcStub } from "@alchemy.run/cloudflare";
+import type { PurgeAuthorization } from "./PurgeAuthorization.ts";
 
 // Domain beta.85 prefixes Durable Object bindings with the model name.
 export class Environment extends Context.Service<
@@ -29,10 +30,7 @@ type AdminStub = {
   deleteArchive: (id: string, title: string) => Effect.Effect<void, Error>;
   listRooms: () => Effect.Effect<Array<{ id: string }>, Error>;
   forgetRoom: (id: string) => Effect.Effect<void, Error>;
-  purge: (authorization?: {
-    actorId: string;
-    title: string;
-  }) => Effect.Effect<{ participants?: ReadonlyArray<string> }, Error>;
+  purge: (authorization?: PurgeAuthorization) => Effect.Effect<{ participants?: ReadonlyArray<string>; retained?: boolean }, Error>;
   finishPurge: () => Effect.Effect<void, Error>;
 };
 
@@ -75,7 +73,7 @@ export const administration = Effect.gen(function* () {
     return result.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   });
 
-  const remove = (id: string, title: string, actorId?: string) =>
+  const remove = (id: string, title: string, actorId?: string, automatic = false) =>
     Effect.gen(function* () {
       if (!/^[a-zA-Z0-9-]{1,100}$/.test(id))
         return yield* Effect.die("Invalid room");
@@ -95,8 +93,12 @@ export const administration = Effect.gen(function* () {
 
       // First freeze the source. Its retryable manifest survives a partial cleanup.
       const manifest = yield* room.purge(
-        actorId ? { actorId, title } : undefined,
+        automatic ? { automatic: true, title } : actorId ? { actorId, title } : undefined,
       );
+
+      // A stale automatic request must not purge any projection or directory
+      // entry when the aggregate's authoritative deadline still protects it.
+      if (manifest.retained) return { deleted: false };
 
       yield* stub(env["CommonGround.SharedBoardView"], id).purge();
       yield* stub(env["CommonGround.InvitationsView"], id).purge();

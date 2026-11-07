@@ -1,6 +1,7 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { RoomId } from "./Room.id.ts";
+import { RoomRetentionScheduled } from "./RoomRetentionScheduled.event.ts";
 
 export class RoomDeletionRequested extends Domain.Event("RoomDeletionRequested", {
   title: Schema.String,
@@ -10,5 +11,5 @@ export class RoomDeletionRequested extends Domain.Event("RoomDeletionRequested",
 export class RequestRoomDeletion extends Domain.Command("RequestRoomDeletion", {
   target: RoomId,
   input: {},
-  events: [RoomDeletionRequested],
+  events: [RoomDeletionRequested, RoomRetentionScheduled],
 }) {}
